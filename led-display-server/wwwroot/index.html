@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<meta charset="utf-8" />
+<html>
+
+<head>
+    <title>Ninjametal</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="end-to-end encrypted unlimited size file transfer" />
+
+
+
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+    <link rel="manifest" href="/site.webmanifest">
+    <link rel="mask-icon" href="/safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="msapplication-TileColor" content="#2b5797">
+    <meta name="theme-color" content="#ffffff">
+    
+    
+    <script src="https://cdn.jsdelivr.net/npm/web-streams-polyfill@2.0.2/dist/ponyfill.min.js"></script>
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+
+
+    <!-- jQuery library -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+
+    <!-- Popper JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>
+
+    <!-- Latest compiled JavaScript -->
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.min.js"></script>
+
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background: #f1f1f1;
+        }
+
+        div.box {
+            position: absolute;
+            margin: auto;
+            height: 100%;
+            width: 100%;
+            max-width: 600px;
+            max-height: 900px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0px 0px 100px 0px #888888;
+        }
+
+        /**************************************
+******** Welcom to Terasend ***********
+***************************************/
+
+        div.landing-page-section {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        div.landing-page-top {
+            background: white;
+            text-align: center;
+        }
+
+        div.landing-page-middle {
+            flex: 1;
+            background: white;
+        }
+
+        table.more-info {
+            position: relative;
+            left: 50%;
+            transform: translateX(-50%);
+            margin-top: 8px;
+            margin-bottom: 10px;
+        }
+
+        /* this does not work for some reason */
+        [data-toggle="collapse"] .collapse-icon:before {
+            content: "more"
+        }
+
+        /* this does not work for some reason */
+        [data-toggle="collapse"].collapsed .collapse-icon:before {
+            content: "less"
+        }
+
+        p.terasend-desc {
+            margin-left: 5px;
+            margin-right: 5px;
+            padding: 0;
+        }
+
+        .main-icon {
+            font-size: 6em;
+            color: #007bff;
+            margin-top: 50px;
+            margin-bottom: 50px;
+            width: 100px;
+        }
+
+        i.fa-smile-o {
+            font-size: 6em;
+            color: #007bff;
+            margin-bottom: 5px;
+        }
+
+        .light-text {
+            opacity: .6
+        }
+
+        button.send-a-file {
+            position: relative;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            margin-bottom: 20px;
+        }
+
+
+
+
+
+    </style>
+</head>
+
+<body>
+
+    <div class="box">
+
+        <div class="landing-page-section" id="landingPageSection">
+            <div class="landing-page-top">
+                <div>
+                    <img src="./img/Rust_programming_language_black_logo.svg" class="main-icon">
+                </div>
+           <!--     <div><i class="fa fa-commenting main-icon"></i></div>-->
+                Welcome to the Rust NinjaMetal Demo
+                <div><span class="light-text">enter a pseudonym and post messages to the queue &nbsp;</span><a class="collapse-icon"
+                        data-toggle="collapse" data-target="#demo" href="#demo">more</a></div>
+                <div id="demo" class="collapse">
+                    <i class="fa fa-smile-o"></i>
+                    <p class="terasend-desc">
+                        Your messages should appear on the LED panel in the meeting room
+                    <br><br>
+                        This site was primarily created for this one demo and won't remain up and running thereafter.
+                        The code can be found at https://github.com/ninjasource/embedded-websocket
+                    </p>
+                </div>
+            </div>
+            <div class="landing-page-middle">
+                <button class="btn btn-primary send-a-file" id="sendAFileButton" onclick="sendAFileClick()">
+                    Send a file
+                </button>
+            </div>
+        </div>
+
+
+    </div>
+    <script src="sender.min.js?version=12" async> </script>
+
+</body>
+
+</html>
