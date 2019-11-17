@@ -19,6 +19,8 @@ use ws::{WebSocketReceiveMessageType, WebSocketSendMessageType, WebSocketServer,
 type SpiFullDuplex = FullDuplex<u8, Error = stm32f1xx_hal::spi::Error>;
 use cortex_m::peripheral::itm::Stim;
 
+use core::fmt::Arguments;
+use cortex_m::itm;
 //type MAX7219Type<'cs, PinError> = MAX7219<'cs, OutputPin<Error = PinError>>;
 
 #[derive(Debug)]
@@ -62,12 +64,22 @@ impl Connection {
     }
 }
 
+fn log(itm: &mut Stim, msg: &str) {
+ //   itm::write_str(itm, msg);
+ //   itm::write_str(itm, "\n");
+}
+
+fn log_fmt(itm: &mut Stim, args: Arguments) {
+ //   itm::write_fmt(itm, args);
+ //   itm::write_str(itm, "\n");
+}
+
 #[entry]
 fn main() -> ! {
     let mut cp: cortex_m::Peripherals = cortex_m::Peripherals::take().unwrap();
     let dp = stm32::Peripherals::take().unwrap();
     let itm = &mut cp.ITM;
-    iprintln!(&mut itm.stim[0], "[INF] Initializing");
+    log(&mut itm.stim[0], "[INF] Initializing");
 
     let mut rcc = dp.RCC.constrain();
     let mut afio = dp.AFIO.constrain(&mut rcc.apb2);
@@ -96,10 +108,10 @@ fn main() -> ! {
     );
 
     // wait for things to settle
-    delay.delay_ms(20_u16);
+    delay.delay_ms(250_u16);
 
     let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
-    iprintln!(&mut itm.stim[0], "[INF] Done initializing");
+    log(&mut itm.stim[0], "[INF] Done initializing");
 
     let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
     max7219.write_command_all(&mut spi, Command::OnOff, 0);
@@ -116,11 +128,12 @@ fn main() -> ! {
             &mut itm.stim[0],
             &mut delay,
             &mut cs_ethernet,
-            &mut max7219)
-            .map_err(|_e| iprintln!(&mut itm.stim[0], "ERROR Unexpected error"));
+            &mut max7219,
+        )
+        .map_err(|_e| log(&mut itm.stim[0], "ERROR Unexpected error"));
     }
 
-    iprintln!(&mut itm.stim[0], "[WRN] Unexpected end of run loop");
+    log(&mut itm.stim[0], "[WRN] Unexpected end of run loop");
     loop {}
 }
 
@@ -264,30 +277,35 @@ where
                 Ok(Some(socket_status)) => {
                     if connection.socket_status != socket_status {
                         // print status change
-                        iprintln!(
+                        log_fmt(
                             itm,
-                            "INFO Socket status: {:?} -> {:?}",
-                            connection.socket_status,
-                            socket_status
+                            format_args!(
+                                "INFO Socket status: {:?} -> {:?}",
+                                connection.socket_status, socket_status
+                            ),
                         );
                         if socket_status == SocketStatus::Closed {
-                            iprintln!(itm);
+                            log(itm, "");
                         }
                         connection.socket_status = socket_status;
                     }
                     match socket_status {
                         SocketStatus::Closed | SocketStatus::CloseWait => {
                             // open
-                            iprintln!(itm, "INFO TCP Opening {:?}", connection.socket);
+                            log_fmt(
+                                itm,
+                                format_args!("INFO TCP Opening {:?}", connection.socket),
+                            );
                             w5500.open_tcp(spi, connection.socket)?;
                         }
                         SocketStatus::Init => {
                             // listen
-                            iprintln!(
+                            log_fmt(
                                 itm,
-                                "INFO TCP Attempting to listen to {:?} on port: {}",
-                                connection.socket,
-                                PORT
+                                format_args!(
+                                    "INFO TCP Attempting to listen to {:?} on port: {}",
+                                    connection.socket, PORT
+                                ),
                             );
                             w5500.listen_tcp(spi, connection.socket, PORT)?;
                         }
@@ -308,10 +326,10 @@ where
                     }
                 }
                 Ok(None) => {
-                    iprintln!(itm, "ERROR Unknown socket status");
+                    log(itm, "ERROR Unknown socket status");
                     return Ok(());
                 }
-                Err(_e) => iprintln!(itm, "ERROR Cannot read socket status"),
+                Err(_e) => log(itm, "ERROR Cannot read socket status"),
             }
         }
     }
@@ -330,11 +348,12 @@ fn ws_write_back(
     eth_buffer[..count].copy_from_slice(&ws_buffer[..count]);
     let ws_to_send = web_socket.write(send_message_type, true, &eth_buffer[..count], ws_buffer)?;
     eth_write(spi, socket, w5500, &ws_buffer[..ws_to_send], itm)?;
-    iprintln!(
+    log_fmt(
         itm,
-        "INFO Websocket encoded {:#?}: {} bytes",
-        send_message_type,
-        ws_to_send
+        format_args!(
+            "INFO Websocket encoded {:#?}: {} bytes",
+            send_message_type, ws_to_send
+        ),
     );
     Ok(())
 }
@@ -353,17 +372,18 @@ where
     CS: OutputPin<Error = PinError>,
 {
     let ws_read_result = web_socket.read(&eth_buffer, ws_buffer)?;
-    iprintln!(
+    log_fmt(
         itm,
-        "INFO Websocket decoded {:#?}: {} bytes",
-        ws_read_result.message_type,
-        ws_read_result.len_to
+        format_args!(
+            "INFO Websocket decoded {:#?}: {} bytes",
+            ws_read_result.message_type, ws_read_result.len_to
+        ),
     );
     match ws_read_result.message_type {
         WebSocketReceiveMessageType::Text => {
             {
                 let message = ::core::str::from_utf8(&ws_buffer[..ws_read_result.len_to])?;
-                iprintln!(itm, "INFO Websocket: {}", &message);
+                log_fmt(itm, format_args!("INFO Websocket: {}", &message));
                 scroll_str(max7219, spi, message);
             }
 
@@ -388,14 +408,18 @@ where
             {
                 if ws_read_result.len_to > 2 {
                     let message = ::core::str::from_utf8(&ws_buffer[2..ws_read_result.len_to])?;
-                    iprintln!(
+                    log_fmt(
                         itm,
-                        "INFO Websocket close status {:#?}: {}",
-                        close_status,
-                        message
+                        format_args!(
+                            "INFO Websocket close status {:#?}: {}",
+                            close_status, message
+                        ),
                     );
                 } else {
-                    iprintln!(itm, "INFO Websocket close status {:#?}", close_status);
+                    log_fmt(
+                        itm,
+                        format_args!("INFO Websocket close status {:#?}", close_status),
+                    );
                 }
             }
 
@@ -411,7 +435,7 @@ where
                 itm,
             )?;
             w5500.close(spi, socket)?;
-            iprintln!(itm, "INFO TCP connection closed");
+            log(itm, "INFO TCP connection closed");
         }
         WebSocketReceiveMessageType::Ping => {
             ws_write_back(
@@ -430,9 +454,9 @@ where
             // do nothing
         }
         WebSocketReceiveMessageType::CloseCompleted => {
-            iprintln!(itm, "INFO Websocket close handshake completed");
+            log(itm, "INFO Websocket close handshake completed");
             w5500.close(spi, socket)?;
-            iprintln!(itm, "INFO TCP connection closed");
+            log(itm, "INFO TCP connection closed");
         }
     }
 
@@ -449,7 +473,7 @@ fn eth_write(
     let mut start = 0;
     loop {
         let bytes_sent = w5500.send_tcp(spi, socket, &buffer[start..])?;
-        iprintln!(itm, "INFO Sent {} bytes", bytes_sent);
+        log_fmt(itm, format_args!("INFO Sent {} bytes", bytes_sent));
         start += bytes_sent;
 
         if start == buffer.len() {
@@ -466,10 +490,10 @@ fn send_html_and_close(
     html: &str,
     itm: &mut Stim,
 ) -> Result<(), WebServerError> {
-    iprintln!(itm, "INFO Sending: {}", html);
+    log_fmt(itm, format_args!("INFO Sending: {}", html));
     eth_write(spi, socket, w5500, &html.as_bytes(), itm)?;
     w5500.close(spi, socket)?;
-    iprintln!(itm, "INFO Send complete. Connection closed");
+    log(itm, "INFO Send complete. Connection closed");
     Ok(())
 }
 
@@ -489,7 +513,7 @@ where
 {
     let size = w5500.try_receive_tcp(spi, socket, eth_buffer)?;
     if let Some(size) = size {
-        iprintln!(itm, "INFO Received {} bytes", size);
+        log_fmt(itm, format_args!("INFO Received {} bytes", size));
         if web_socket.state == WebSocketState::Open {
             ws_read(
                 spi, socket, w5500, web_socket, eth_buffer, ws_buffer, itm, max7219,
@@ -497,21 +521,26 @@ where
         } else {
             let http_header = ws::read_http_header(eth_buffer)?;
             if let Some(websocket_context) = http_header.websocket_context {
-                iprintln!(itm, "INFO Websocket request. Generating handshake");
+                log(itm, "INFO Websocket request. Generating handshake");
                 let ws_send = web_socket.server_accept(
                     &websocket_context.sec_websocket_key,
                     None,
                     eth_buffer,
                 )?;
-                iprintln!(
+                log_fmt(
                     itm,
-                    "INFO Websocket sending handshake response of {} bytes",
-                    ws_send
+                    format_args!(
+                        "INFO Websocket sending handshake response of {} bytes",
+                        ws_send
+                    ),
                 );
                 w5500.send_tcp(spi, socket, &eth_buffer[..ws_send])?;
-                iprintln!(itm, "INFO Websocket handshake complete");
+                log(itm, "INFO Websocket handshake complete");
             } else {
-                iprintln!(itm, "INFO Http File header path: {}", http_header.path);
+                log_fmt(
+                    itm,
+                    format_args!("INFO Http File header path: {}", http_header.path),
+                );
                 match http_header.path.as_str() {
                     "/" => {
                         send_html_and_close(spi, socket, w5500, root_html, itm)?;
