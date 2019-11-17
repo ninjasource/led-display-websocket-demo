@@ -11,6 +11,8 @@ cortex-m-rt = "0.6"
 cortex-m = "0.6"
 max7219 = { path = "../../max7219-dot-matrix" }
 embedded-hal = "0.2"
+embedded-websocket = { path = "../../embedded-websocket" }
+w5500 = { path = "../../w5500" }
 
 [dependencies.stm32f1xx-hal]
 version = "0.3"

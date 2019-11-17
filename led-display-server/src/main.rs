@@ -31,10 +31,6 @@ fn is_room_valid(room: &str) -> bool {
 }
 
 fn ws_route(room: web::Path<String>, req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
-    if !is_room_valid(file_code.as_str()) {
-        return Ok(HttpResponse::BadRequest().body("Invalid room name"))
-    }
-
     info!("Route: ws/{}", room);
     ws::start(WsSession::new(room.to_string()), &req, stream)
 }
@@ -48,11 +44,12 @@ fn main() -> std::io::Result<()> {
             .service(web::resource("/ws/{room}").route(web::get().to(ws_route)))
             .service(Files::new("/", "wwwroot/").index_file("index.html"))
     })
-        .bind("127.0.0.1:1337")
+       // .bind("127.0.0.1:1337")
+        .bind("192.168.1.149:1337")
         .unwrap()
         .start();
 
-    info!("Started http server: 127.0.0.1:1337");
+    info!("Started http server");
     sys.run()
 }
 
