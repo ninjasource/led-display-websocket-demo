@@ -88,3 +88,7 @@ function messageChanged() {
     ws.send(msg);
     messageInput.value = null;
 }
+
+window.onfocus = () => {
+    ws.reconnect();
+}

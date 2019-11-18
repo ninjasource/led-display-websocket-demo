@@ -10,17 +10,20 @@ use core::str::Utf8Error;
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::OutputPin;
 use embedded_hal::{spi::FullDuplex, spi::Mode, spi::Phase, spi::Polarity};
-use embedded_websocket as ws;
 use max7219::{Command, MAX7219};
 use stm32f1xx_hal::{delay::Delay, prelude::*, spi::Spi, stm32};
 use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
-use ws::{WebSocketReceiveMessageType, WebSocketSendMessageType, WebSocketServer, WebSocketState};
+
+use embedded_websocket as ws;
+use ws::{WebSocketReceiveMessageType, WebSocketSendMessageType, WebSocketServer, WebSocketState, WebSocket, EmptyRng, WebSocketOptions};
+
 
 type SpiFullDuplex = FullDuplex<u8, Error = stm32f1xx_hal::spi::Error>;
 use cortex_m::peripheral::itm::Stim;
 
 use core::fmt::Arguments;
 use cortex_m::itm;
+use embedded_websocket::WebSocketKey;
 //type MAX7219Type<'cs, PinError> = MAX7219<'cs, OutputPin<Error = PinError>>;
 
 #[derive(Debug)]
@@ -65,13 +68,15 @@ impl Connection {
 }
 
 fn log(itm: &mut Stim, msg: &str) {
- //   itm::write_str(itm, msg);
- //   itm::write_str(itm, "\n");
+    // TODO: comment these out before demo
+    itm::write_str(itm, msg);
+    itm::write_str(itm, "\n");
 }
 
 fn log_fmt(itm: &mut Stim, args: Arguments) {
- //   itm::write_fmt(itm, args);
- //   itm::write_str(itm, "\n");
+    // TODO: comment these out before demo
+    itm::write_fmt(itm, args);
+    itm::write_str(itm, "\n");
 }
 
 #[entry]
@@ -169,74 +174,6 @@ fn run_web_server<PinError, CS>(
 where
     CS: OutputPin<Error = PinError>,
 {
-    let root_html = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Length: 2591\r\nConnection: close\r\n\r\n<!doctype html>
-<html>
-<head>
-    <meta content='text/html;charset=utf-8' http-equiv='Content-Type' />
-    <meta content='utf-8' http-equiv='encoding' />
-    <meta name='viewport' content='width=device-width, initial-scale=0.5, maximum-scale=0.5, user-scalable=0' />
-    <meta name='apple-mobile-web-app-capable' content='yes' />
-    <meta name='apple-mobile-web-app-status-bar-style' content='black' />
-    <title>Web Socket Demo</title>
-    <style type='text/css'>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font: 13px Helvetica, Arial; }
-        form { background: #000; padding: 3px; position: fixed; bottom: 0; width: 100%; }
-        form input { border: 0; padding: 10px; width: 90%; margin-right: .5%; }
-        form button { width: 9%; background: rgb(130, 200, 255); border: none; padding: 10px; }
-        #messages { list-style-type: none; margin: 0; padding: 0; }
-        #messages li { padding: 5px 10px; }
-        #messages li:nth-child(odd) { background: #eee; }
-    </style>
-</head>
-<body>
-    <ul id='messages'></ul>
-    <form action=''>
-    <input id='txtBox' autocomplete='off' /><button>Send</button>
-    </form>
-    <script type='text/javascript' src='http://code.jquery.com/jquery-1.11.1.js' ></script>
-    <script type='text/javascript'>
-        var CONNECTION;
-        window.onload = function () {
-            // open the connection to the Web Socket server
-            // CONNECTION = new WebSocket('ws://' + location.host + ':80/chat');
-			CONNECTION = new WebSocket('ws://192.168.1.33:1337/chat');
-
-            // When the connection is open
-            CONNECTION.onopen = function () {
-                $('#messages').append($('<li>').text('Connection opened'));
-            };
-
-            // when the connection is closed by the server
-            CONNECTION.onclose = function () {
-                $('#messages').append($('<li>').text('Connection closed'));
-            };
-
-            // Log errors
-            CONNECTION.onerror = function (e) {
-                console.log('An error occured');
-            };
-
-            // Log messages from the server
-            CONNECTION.onmessage = function (e) {
-                $('#messages').append($('<li>').text(e.data));
-            };
-        };
-
-		$(window).on('beforeunload', function(){
-			CONNECTION.close();
-		});
-
-        // when we press the Send button, send the text to the server
-        $('form').submit(function(){
-            CONNECTION.send($('#txtBox').val());
-            $('#txtBox').val('');
-            return false;
-        });
-    </script>
-</body>
-</html>";
-
     let mut w5500 = W5500::new(cs_ethernet);
 
     w5500.set_mode(spi, false, false, false, false)?;
@@ -252,88 +189,102 @@ where
 
     const NUM_SOCKETS: usize = 8;
 
-    let mut connections: [Connection; NUM_SOCKETS] = [
-        Connection::new(Socket::Socket0),
-        Connection::new(Socket::Socket1),
-        Connection::new(Socket::Socket2),
-        Connection::new(Socket::Socket3),
-        Connection::new(Socket::Socket4),
-        Connection::new(Socket::Socket5),
-        Connection::new(Socket::Socket6),
-        Connection::new(Socket::Socket7),
-    ];
+    // make sure the connection is closed before we start
+    let mut connection = Connection::new(Socket::Socket0);
+    w5500.set_protocol(spi, connection.socket, w5500::Protocol::TCP)?;
+    w5500.dissconnect(spi, connection.socket)?;
 
-    // make sure all the connections are closed before we start
-    for connection in connections.iter() {
-        w5500.set_protocol(spi, connection.socket, w5500::Protocol::TCP)?;
-        w5500.dissconnect(spi, connection.socket)?;
-    }
+    let mut buffer: [u8; 3000] = [0; 3000];
+    let mut ws_buffer: [u8; 500] = [0; 500];
+    let mut web_socket = ws::WebSocket::new_client(EmptyRng::new());
+    let host_ip = IpAddress::new(192,168,1,149);
+
+    // open
+    log_fmt(
+        itm,
+        format_args!("INFO TCP Opening {:?}", connection.socket),
+    );
+    web_socket = ws::WebSocket::new_client(EmptyRng::new());
+    w5500.open_tcp(spi, connection.socket)?;
+    w5500.connect(spi, Socket::Socket0, &host_ip, 1337)?;
 
     loop {
-        for index in 0..NUM_SOCKETS {
-            let mut connection = &mut connections[index];
-
-            match w5500.get_socket_status(spi, connection.socket) {
-                Ok(Some(socket_status)) => {
-                    if connection.socket_status != socket_status {
-                        // print status change
+        match w5500.get_socket_status(spi, connection.socket) {
+            Ok(Some(socket_status)) => {
+                if connection.socket_status != socket_status {
+                    // print status change
+                    log_fmt(
+                        itm,
+                        format_args!(
+                            "INFO Socket status: {:?} -> {:?}",
+                            connection.socket_status, socket_status
+                        ),
+                    );
+                    if socket_status == SocketStatus::Closed {
+                        log(itm, "");
+                    }
+                    connection.socket_status = socket_status;
+                }
+                match socket_status {
+                    SocketStatus::Closed | SocketStatus::CloseWait => {
+                        /*
+                        // open
                         log_fmt(
                             itm,
-                            format_args!(
-                                "INFO Socket status: {:?} -> {:?}",
-                                connection.socket_status, socket_status
-                            ),
+                            format_args!("INFO Closed, TCP Opening {:?}", connection.socket),
                         );
-                        if socket_status == SocketStatus::Closed {
-                            log(itm, "");
-                        }
-                        connection.socket_status = socket_status;
+                        web_socket = ws::WebSocket::new_client(EmptyRng::new());
+                        w5500.open_tcp(spi, connection.socket)?;
+                        w5500.connect(spi, Socket::Socket0, &host_ip, 1337)?;*/
                     }
-                    match socket_status {
-                        SocketStatus::Closed | SocketStatus::CloseWait => {
-                            // open
-                            log_fmt(
-                                itm,
-                                format_args!("INFO TCP Opening {:?}", connection.socket),
-                            );
-                            w5500.open_tcp(spi, connection.socket)?;
-                        }
-                        SocketStatus::Init => {
-                            // listen
-                            log_fmt(
-                                itm,
-                                format_args!(
-                                    "INFO TCP Attempting to listen to {:?} on port: {}",
-                                    connection.socket, PORT
-                                ),
-                            );
-                            w5500.listen_tcp(spi, connection.socket, PORT)?;
-                        }
-                        SocketStatus::Established => {
-                            eth_read(
-                                spi,
-                                connection.socket,
-                                &mut w5500,
-                                &mut connection.web_socket,
-                                &mut buffer,
-                                &mut ws_buffer,
-                                &root_html,
-                                itm,
-                                max7219,
-                            )?;
-                        }
-                        _ => {} // do nothing
+                    SocketStatus::Init => {
+                        /*// open
+                        log_fmt(
+                            itm,
+                            format_args!("INFO TCP Opening {:?}", connection.socket),
+                        );
+                        web_socket = ws::WebSocket::new_client(EmptyRng::new());
+                        w5500.open_tcp(spi, connection.socket)?;
+                        w5500.connect(spi, Socket::Socket0, &host_ip, 1337)?;*/
                     }
+                    SocketStatus::Established => {
+
+                        if web_socket.state == WebSocketState::None {
+                            // initiate a websocket opening handshake
+                            let websocket_options = WebSocketOptions {
+                                path: "/ws/ledpanel",
+                                host: "192.168.1.149",
+                                origin: "http://192.168.1.149",
+                                sub_protocols: None,
+                                additional_headers: None,
+                            };
+                            let (len, web_socket_key) = web_socket.client_connect(&websocket_options, &mut ws_buffer)?;
+                            eth_write(spi, Socket::Socket0, &mut w5500, &mut ws_buffer[..len], itm)?;
+                        }
+
+                        eth_read_client(
+                            spi,
+                            Socket::Socket0,
+                            &mut w5500,
+                            &mut web_socket,
+                            &mut buffer,
+                            &mut ws_buffer,
+                            itm,
+                            max7219,
+                        )?;
+                    }
+                    _ => {} // do nothing
                 }
-                Ok(None) => {
-                    log(itm, "ERROR Unknown socket status");
-                    return Ok(());
-                }
-                Err(_e) => log(itm, "ERROR Cannot read socket status"),
             }
+            Ok(None) => {
+                log(itm, "ERROR Unknown socket status");
+                return Ok(());
+            }
+            Err(_e) => log(itm, "ERROR Cannot read socket status"),
         }
     }
 }
+
 fn ws_write_back(
     spi: &mut SpiFullDuplex,
     socket: Socket,
@@ -365,13 +316,14 @@ fn ws_read<CS, PinError>(
     web_socket: &mut WebSocketServer,
     eth_buffer: &mut [u8],
     ws_buffer: &mut [u8],
+    size : usize,
     itm: &mut Stim,
     max7219: &mut MAX7219<CS>,
 ) -> core::result::Result<(), WebServerError>
 where
     CS: OutputPin<Error = PinError>,
 {
-    let ws_read_result = web_socket.read(&eth_buffer, ws_buffer)?;
+    let ws_read_result = web_socket.read(&eth_buffer[..size], ws_buffer)?;
     log_fmt(
         itm,
         format_args!(
@@ -387,6 +339,7 @@ where
                 scroll_str(max7219, spi, message);
             }
 
+            /*
             ws_write_back(
                 spi,
                 socket,
@@ -397,7 +350,7 @@ where
                 ws_read_result.len_to,
                 WebSocketSendMessageType::Text,
                 itm,
-            )?;
+            )?;*/
         }
         WebSocketReceiveMessageType::Binary => {
             // do nothing
@@ -497,62 +450,36 @@ fn send_html_and_close(
     Ok(())
 }
 
-fn eth_read<CS, PinError>(
+fn eth_read_client<CS, PinError>(
     spi: &mut SpiFullDuplex,
     socket: Socket,
     w5500: &mut W5500,
-    web_socket: &mut WebSocketServer,
+    web_socket: &mut WebSocket<EmptyRng>,
     eth_buffer: &mut [u8],
     ws_buffer: &mut [u8],
-    root_html: &str,
     itm: &mut Stim,
     max7219: &mut MAX7219<CS>,
 ) -> Result<(), WebServerError>
-where
-    CS: OutputPin<Error = PinError>,
+    where
+        CS: OutputPin<Error = PinError>,
 {
     let size = w5500.try_receive_tcp(spi, socket, eth_buffer)?;
     if let Some(size) = size {
         log_fmt(itm, format_args!("INFO Received {} bytes", size));
-        if web_socket.state == WebSocketState::Open {
-            ws_read(
-                spi, socket, w5500, web_socket, eth_buffer, ws_buffer, itm, max7219,
-            )?;
-        } else {
-            let http_header = ws::read_http_header(eth_buffer)?;
-            if let Some(websocket_context) = http_header.websocket_context {
-                log(itm, "INFO Websocket request. Generating handshake");
-                let ws_send = web_socket.server_accept(
-                    &websocket_context.sec_websocket_key,
-                    None,
-                    eth_buffer,
+
+        match web_socket.state {
+            WebSocketState::Connecting => {
+                let sec_websocket_key = WebSocketKey::new();
+                web_socket.client_accept(&sec_websocket_key, &eth_buffer[..size])?;
+            },
+            WebSocketState::Open => {
+                ws_read(
+                    spi, socket, w5500, web_socket, eth_buffer, ws_buffer, size, itm, max7219,
                 )?;
-                log_fmt(
-                    itm,
-                    format_args!(
-                        "INFO Websocket sending handshake response of {} bytes",
-                        ws_send
-                    ),
-                );
-                w5500.send_tcp(spi, socket, &eth_buffer[..ws_send])?;
-                log(itm, "INFO Websocket handshake complete");
-            } else {
-                log_fmt(
-                    itm,
-                    format_args!("INFO Http File header path: {}", http_header.path),
-                );
-                match http_header.path.as_str() {
-                    "/" => {
-                        send_html_and_close(spi, socket, w5500, root_html, itm)?;
-                    }
-                    _ => {
-                        let http = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                        send_html_and_close(spi, socket, w5500, http, itm)?;
-                    }
-                }
-            }
-        }
-    }
+            },
+            _ => log(itm, "Unexpected WebSocketState")
+        };
+    };
 
     Ok(())
 }
