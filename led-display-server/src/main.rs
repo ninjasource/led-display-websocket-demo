@@ -66,11 +66,11 @@ struct WsSession {
 }
 
 impl WsSession {
-    fn new(room: String) -> WsSession {
+    fn new(name: String) -> WsSession {
         WsSession {
             id: 0, // will get an id once they have joined a room
-            room,
-            name : None,
+            room : "rustdudes".to_string(),
+            name : Some(name),
             hb: Instant::now()
         }
     }
@@ -139,7 +139,7 @@ impl WsSession {
 
     fn send_msg(&self, msg: &str) {
         let content = format!(
-            "{}: {}",
+            "@{} - {}",
             self.name.clone().unwrap_or_else(|| "anon".to_string()),
             msg
         );

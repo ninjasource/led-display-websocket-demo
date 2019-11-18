@@ -97,7 +97,7 @@ impl Handler<JoinRoom> for WsServer {
             client_name.unwrap_or_else(|| "anon".to_string()),
             room_name
         );
-        self.send_chat_message(&room_name, &join_msg, id);
+     //   self.send_chat_message(&room_name, &join_msg, id);
         MessageResult(id)
     }
 }

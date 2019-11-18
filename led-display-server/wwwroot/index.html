@@ -4,8 +4,8 @@
 
 <head>
     <title>Ninjametal</title>
-<!--    <meta name="viewport" content="width=device-width, initial-scale=1">-->
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0"/>
+    <!--    <meta name="viewport" content="width=device-width, initial-scale=1">-->
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
     <meta name="description" content="end-to-end encrypted unlimited size file transfer" />
 
 
@@ -72,9 +72,6 @@
             margin-bottom: 20px;
         }
 
-        div.lending-page-center {
-        }
-
         table.more-info {
             position: relative;
             left: 50%;
@@ -128,12 +125,30 @@
             flex: 1;
         }
 
+        div.error {
+            padding-top: 20px;
+            color: red;
+            width: 250px;
+            margin: auto;
+            text-align: center
+        }
 
+        div.chat-section {
+            display: none;
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            display: none;
+            flex-direction: row;
+            align-content: center;
+        }
 
-
-
-
-
+        div.chat-section-middle {
+            flex: 1;
+            margin: auto;
+            padding: 20px;
+        }
     </style>
 </head>
 
@@ -153,29 +168,22 @@
                     <i class="fa fa-smile-o"></i>
                     <p class="more-desc">
                         Your messages should appear on the LED panel in the meeting room
-                    <br><br>
+                        <br><br>
                         This site was primarily created for this one demo and won't remain up and running thereafter.
-                        The code can be found <a href="https://github.com/ninjasource/led-display-websocket-demo">here</a>
+                        The code can be found <a
+                            href="https://github.com/ninjasource/led-display-websocket-demo">here</a>
                     </p>
                 </div>
             </div>
-            <!--
-            <div class="data-entry">
-                <div class="input-group nickname">
-                    <span class="input-group-addon">@</span>
-                    <input id="nickname" type="text" class="form-control" placeholder="nickname" autocapitalize="off">
-                </div>
-
-                <div class="message">
-                    <input id="message" type="text" class="form-control" placeholder="message">
-                </div>
-            </div>
--->
             <div class="landing-page-middle">
                 <div class="landing-page-form">
                     <div class="input-group nickname">
                         <span class="input-group-addon">@</span>
-                        <input id="nickname" type="text" class="form-control" placeholder="nickname" autocapitalize="off">
+                        <input id="nickname" type="text" class="form-control" placeholder="nickname"
+                            autocapitalize="off">
+                    </div>
+                    <div class="error">
+                        <label id="error"></label>
                     </div>
                     <div class="connect">
                         <button class="btn btn-primary" id="connect" onclick="connectClick()">
@@ -187,9 +195,18 @@
             </div>
         </div>
 
+        <div class="chat-section" id="chatSection">
+            <div class="chat-section-middle">
+                <div class="message">
+                    <input id="message" type="text" class="form-control" onchange="messageChanged()"
+                        placeholder="type a message">
+                </div>
+            </div>
+        </div>
+
 
     </div>
-    <script src="sender.min.js?version=12" async> </script>
+    <script src="index.js?version=5" async> </script>
 
 </body>
 
