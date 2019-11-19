@@ -69,14 +69,14 @@ impl Connection {
 
 fn log(itm: &mut Stim, msg: &str) {
     // TODO: comment these out before demo
-    itm::write_str(itm, msg);
-    itm::write_str(itm, "\n");
+  //  itm::write_str(itm, msg);
+  //  itm::write_str(itm, "\n");
 }
 
 fn log_fmt(itm: &mut Stim, args: Arguments) {
     // TODO: comment these out before demo
-    itm::write_fmt(itm, args);
-    itm::write_str(itm, "\n");
+  //  itm::write_fmt(itm, args);
+  //  itm::write_str(itm, "\n");
 }
 
 #[entry]
@@ -135,7 +135,7 @@ fn main() -> ! {
             &mut cs_ethernet,
             &mut max7219,
         )
-        .map_err(|_e| log(&mut itm.stim[0], "ERROR Unexpected error"));
+        .map_err(|e| log_fmt(&mut itm.stim[0], format_args!("ERROR Unexpected error: {:?}", e)));
     }
 
     log(&mut itm.stim[0], "[WRN] Unexpected end of run loop");
@@ -178,9 +178,12 @@ where
 
     w5500.set_mode(spi, false, false, false, false)?;
     w5500.set_mac(spi, &MacAddress::new(0x02, 0x01, 0x02, 0x03, 0x04, 0x05))?;
-    w5500.set_ip(spi, &IpAddress::new(192, 168, 1, 33))?;
+ //  w5500.set_ip(spi, &IpAddress::new(192, 168, 1, 33))?;
+ //   w5500.set_subnet(spi, &IpAddress::new(255, 255, 255, 0))?;
+ //   w5500.set_gateway(spi, &IpAddress::new(192, 168, 1, 1))?;
+    w5500.set_ip(spi, &IpAddress::new(192, 168, 137, 33))?;
     w5500.set_subnet(spi, &IpAddress::new(255, 255, 255, 0))?;
-    w5500.set_gateway(spi, &IpAddress::new(192, 168, 1, 1))?;
+    w5500.set_gateway(spi, &IpAddress::new(192, 168, 137, 1))?;
 
     const PORT: u16 = 1337;
 
@@ -197,8 +200,8 @@ where
     let mut buffer: [u8; 3000] = [0; 3000];
     let mut ws_buffer: [u8; 500] = [0; 500];
     let mut web_socket = ws::WebSocket::new_client(EmptyRng::new());
-    let host_ip = IpAddress::new(192,168,1,149);
-
+   // let host_ip = IpAddress::new(192,168,1,149);
+    let host_ip = IpAddress::new(51,140,68,75);
     // open
     log_fmt(
         itm,
@@ -206,8 +209,8 @@ where
     );
     web_socket = ws::WebSocket::new_client(EmptyRng::new());
     w5500.open_tcp(spi, connection.socket)?;
-    w5500.connect(spi, Socket::Socket0, &host_ip, 1337)?;
-
+//    w5500.connect(spi, Socket::Socket0, &host_ip, 1337)?;
+    w5500.connect(spi, Socket::Socket0, &host_ip, 80)?;
     loop {
         match w5500.get_socket_status(spi, connection.socket) {
             Ok(Some(socket_status)) => {
@@ -253,8 +256,8 @@ where
                             // initiate a websocket opening handshake
                             let websocket_options = WebSocketOptions {
                                 path: "/ws/ledpanel",
-                                host: "192.168.1.149",
-                                origin: "http://192.168.1.149",
+                                host: "ninjametal.com",
+                                origin: "http://ninjametal.com",
                                 sub_protocols: None,
                                 additional_headers: None,
                             };

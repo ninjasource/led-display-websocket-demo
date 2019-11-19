@@ -44,8 +44,8 @@ fn main() -> std::io::Result<()> {
             .service(web::resource("/ws/{room}").route(web::get().to(ws_route)))
             .service(Files::new("/", "wwwroot/").index_file("index.html"))
     })
-       // .bind("127.0.0.1:1337")
-        .bind("192.168.1.149:1337")
+        .bind("127.0.0.1:8663")
+      //  .bind("192.168.1.149:1337")
         .unwrap()
         .start();
 
