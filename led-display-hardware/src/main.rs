@@ -10,7 +10,7 @@ use core::str::Utf8Error;
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::OutputPin;
 use embedded_hal::{spi::FullDuplex, spi::Mode, spi::Phase, spi::Polarity};
-use max7219::{Command, MAX7219};
+use max7219_dot_matrix::{Command, MAX7219};
 use stm32f1xx_hal::{delay::Delay, prelude::*, spi::Spi, stm32};
 use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
 
