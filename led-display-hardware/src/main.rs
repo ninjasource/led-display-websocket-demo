@@ -3,8 +3,8 @@
 
 extern crate panic_itm;
 
-#[macro_use]
-extern crate cortex_m;
+//#[macro_use]
+//extern crate cortex_m;
 
 use core::str::Utf8Error;
 use cortex_m_rt::entry;
@@ -20,7 +20,7 @@ use ws::{
     WebSocketServer, WebSocketState,
 };
 
-type SpiFullDuplex = FullDuplex<u8, Error = stm32f1xx_hal::spi::Error>;
+type SpiFullDuplex = dyn FullDuplex<u8, Error = stm32f1xx_hal::spi::Error>;
 use cortex_m::peripheral::itm::Stim;
 
 use core::fmt::Arguments;
@@ -69,15 +69,15 @@ impl Connection {
 }
 
 fn log(itm: &mut Stim, msg: &str) {
-    // TODO: comment these out before demo
-    //  itm::write_str(itm, msg);
-    //  itm::write_str(itm, "\n");
+    // TODO: comment these out before demo - itm is not setup correctly without the openocd attached
+    itm::write_str(itm, msg);
+    itm::write_str(itm, "\n");
 }
 
 fn log_fmt(itm: &mut Stim, args: Arguments) {
-    // TODO: comment these out before demo
-    //  itm::write_fmt(itm, args);
-    //  itm::write_str(itm, "\n");
+    // TODO: comment these out before demo - itm is not setup correctly without the openocd attached
+    itm::write_fmt(itm, args);
+    itm::write_str(itm, "\n");
 }
 
 #[entry]
@@ -115,42 +115,58 @@ fn main() -> ! {
 
     // wait for things to settle
     delay.delay_ms(250_u16);
-
     let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
-    log(&mut itm.stim[0], "[INF] Done initializing");
+    let mut w5500 = W5500::new(&mut cs_ethernet);
 
-    let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
-    max7219.write_command_all(&mut spi, Command::OnOff, 0);
-    max7219.write_command_all(&mut spi, Command::ScanLimit, 7);
-    max7219.write_command_all(&mut spi, Command::DecodeMode, 0);
-    max7219.write_command_all(&mut spi, Command::DisplayTest, 0);
-    max7219.clear_all(&mut spi);
-    max7219.write_command_all(&mut spi, Command::Intensity, 1);
-    max7219.write_command_all(&mut spi, Command::OnOff, 1);
-
-    loop {
-        run_web_server(
-            &mut spi,
+    run_loop(&mut spi, &mut itm.stim[0], &mut max7219, &mut w5500)
+        .map_err(|e|
+        log_fmt(
             &mut itm.stim[0],
-            &mut delay,
-            &mut cs_ethernet,
-            &mut max7219,
-        )
-        .map_err(|e| {
-            log_fmt(
-                &mut itm.stim[0],
-                format_args!("ERROR Unexpected error: {:?}", e),
-            )
-        });
-    }
+            format_args!("ERROR Unexpected error: {:?}", e),
+        ));
 
-    log(&mut itm.stim[0], "[WRN] Unexpected end of run loop");
     loop {}
 }
 
+fn run_loop<PinError, CS1, CS2>(
+    spi: &mut SpiFullDuplex,
+    itm: &mut Stim,
+    max7219: &mut MAX7219<CS1>,
+    w5500: &mut W5500<CS2>,
+) -> Result<(), WebServerError>
+    where
+        CS1: OutputPin<Error = PinError>,
+        CS2: OutputPin<Error = PinError>,
+{
+    log(itm, "[INF] Done initializing");
+
+    max7219.write_command_all(spi, Command::OnOff, 0);
+    max7219.write_command_all(spi, Command::ScanLimit, 7);
+    max7219.write_command_all(spi, Command::DecodeMode, 0);
+    max7219.write_command_all(spi, Command::DisplayTest, 0);
+    max7219.clear_all(spi);
+    max7219.write_command_all(spi, Command::Intensity, 1);
+    max7219.write_command_all(spi, Command::OnOff, 1);
+
+    loop {
+        client_connect(
+            spi,
+            itm,
+            max7219,
+            w5500,
+        )
+            .map_err(|e| {
+                log_fmt(
+                    itm,
+                    format_args!("ERROR Unexpected error: {:?}", e),
+                )
+            });
+    }
+}
+
 fn scroll_str<PinError, CS>(max7219: &mut MAX7219<CS>, spi: &mut SpiFullDuplex, message: &str)
-where
-    CS: OutputPin<Error = PinError>,
+    where
+        CS: OutputPin<Error = PinError>,
 {
     let from_pos = max7219.get_num_devices() * 8;
     let to_pos = message.len() as i32 * -8;
@@ -168,26 +184,21 @@ where
     }
 }
 
-fn run_web_server<PinError, CS>(
+fn client_connect<PinError, CS1, CS2>(
     spi: &mut SpiFullDuplex,
     itm: &mut Stim,
-    delay: &mut Delay,
-    cs_ethernet: &mut embedded_hal::digital::OutputPin,
-    max7219: &mut MAX7219<CS>,
+    max7219: &mut MAX7219<CS1>,
+    w5500: &mut W5500<CS2>,
 ) -> Result<(), WebServerError>
-where
-    CS: OutputPin<Error = PinError>,
+    where
+        CS1: OutputPin<Error = PinError>,
+        CS2: OutputPin<Error = PinError>,
 {
-    let mut w5500 = W5500::new(cs_ethernet);
-
     w5500.set_mode(spi, false, false, false, false)?;
     w5500.set_mac(spi, &MacAddress::new(0x02, 0x01, 0x02, 0x03, 0x04, 0x05))?;
     w5500.set_ip(spi, &IpAddress::new(192, 168, 137, 33))?;
     w5500.set_subnet(spi, &IpAddress::new(255, 255, 255, 0))?;
     w5500.set_gateway(spi, &IpAddress::new(192, 168, 137, 1))?;
-
-    let mut buffer: [u8; 3000] = [0; 3000];
-    let mut ws_buffer: [u8; 500] = [0; 500];
 
     // make sure the connection is closed before we start
     let mut connection = Connection::new(Socket::Socket0);
@@ -196,7 +207,6 @@ where
 
     let mut buffer: [u8; 3000] = [0; 3000];
     let mut ws_buffer: [u8; 500] = [0; 500];
-    let mut web_socket = ws::WebSocket::new_client(EmptyRng::new());
     let host_ip = IpAddress::new(51, 140, 68, 75);
 
     // open
@@ -204,7 +214,7 @@ where
         itm,
         format_args!("INFO TCP Opening {:?}", connection.socket),
     );
-    web_socket = ws::WebSocket::new_client(EmptyRng::new());
+    let mut web_socket = ws::WebSocket::new_client(EmptyRng::new());
     w5500.open_tcp(spi, connection.socket)?;
     w5500.connect(spi, Socket::Socket0, &host_ip, 80)?;
     loop {
@@ -235,12 +245,12 @@ where
                                 sub_protocols: None,
                                 additional_headers: None,
                             };
-                            let (len, web_socket_key) =
+                            let (len, _web_socket_key) =
                                 web_socket.client_connect(&websocket_options, &mut ws_buffer)?;
                             eth_write(
                                 spi,
                                 Socket::Socket0,
-                                &mut w5500,
+                                w5500,
                                 &mut ws_buffer[..len],
                                 itm,
                             )?;
@@ -249,12 +259,12 @@ where
                         eth_read_client(
                             spi,
                             Socket::Socket0,
-                            &mut w5500,
                             &mut web_socket,
                             &mut buffer,
                             &mut ws_buffer,
                             itm,
                             max7219,
+                            w5500,
                         )?;
                     }
                     _ => {} // do nothing
@@ -269,17 +279,21 @@ where
     }
 }
 
-fn ws_write_back(
+
+fn ws_write_back<PinError, CS>(
     spi: &mut SpiFullDuplex,
     socket: Socket,
-    w5500: &mut W5500,
+    w5500: &mut W5500<CS>,
     web_socket: &mut WebSocketServer,
     eth_buffer: &mut [u8],
     ws_buffer: &mut [u8],
     count: usize,
     send_message_type: WebSocketSendMessageType,
     itm: &mut Stim,
-) -> Result<(), WebServerError> {
+) -> Result<(), WebServerError>
+    where
+        CS: OutputPin<Error = PinError>
+{
     eth_buffer[..count].copy_from_slice(&ws_buffer[..count]);
     let ws_to_send = web_socket.write(send_message_type, true, &eth_buffer[..count], ws_buffer)?;
     eth_write(spi, socket, w5500, &ws_buffer[..ws_to_send], itm)?;
@@ -293,19 +307,20 @@ fn ws_write_back(
     Ok(())
 }
 
-fn ws_read<CS, PinError>(
+fn ws_read<PinError, CS1, CS2>(
     spi: &mut SpiFullDuplex,
     socket: Socket,
-    w5500: &mut W5500,
     web_socket: &mut WebSocketServer,
     eth_buffer: &mut [u8],
     ws_buffer: &mut [u8],
     size: usize,
     itm: &mut Stim,
-    max7219: &mut MAX7219<CS>,
+    max7219: &mut MAX7219<CS1>,
+    w5500: &mut W5500<CS2>,
 ) -> core::result::Result<(), WebServerError>
 where
-    CS: OutputPin<Error = PinError>,
+    CS1: OutputPin<Error = PinError>,
+    CS2: OutputPin<Error = PinError>,
 {
     let ws_read_result = web_socket.read(&eth_buffer[..size], ws_buffer)?;
     log_fmt(
@@ -384,13 +399,16 @@ where
     Ok(())
 }
 
-fn eth_write(
+fn eth_write<PinError, CS>(
     spi: &mut SpiFullDuplex,
     socket: Socket,
-    w5500: &mut W5500,
+    w5500: &mut W5500<CS>,
     buffer: &[u8],
     itm: &mut Stim,
-) -> Result<(), WebServerError> {
+) -> Result<(), WebServerError>
+    where
+        CS: OutputPin<Error = PinError>,
+{
     let mut start = 0;
     loop {
         let bytes_sent = w5500.send_tcp(spi, socket, &buffer[start..])?;
@@ -403,18 +421,19 @@ fn eth_write(
     }
 }
 
-fn eth_read_client<CS, PinError>(
+fn eth_read_client<PinError, CS1, CS2>(
     spi: &mut SpiFullDuplex,
     socket: Socket,
-    w5500: &mut W5500,
     web_socket: &mut WebSocket<EmptyRng>,
     eth_buffer: &mut [u8],
     ws_buffer: &mut [u8],
     itm: &mut Stim,
-    max7219: &mut MAX7219<CS>,
+    max7219: &mut MAX7219<CS1>,
+    w5500: &mut W5500<CS2>,
 ) -> Result<(), WebServerError>
 where
-    CS: OutputPin<Error = PinError>,
+    CS1: OutputPin<Error = PinError>,
+    CS2: OutputPin<Error = PinError>,
 {
     let size = w5500.try_receive_tcp(spi, socket, eth_buffer)?;
     if let Some(size) = size {
@@ -427,7 +446,7 @@ where
             }
             WebSocketState::Open => {
                 ws_read(
-                    spi, socket, w5500, web_socket, eth_buffer, ws_buffer, size, itm, max7219,
+                    spi, socket,  web_socket, eth_buffer, ws_buffer, size, itm, max7219, w5500
                 )?;
             }
             _ => log(itm, "Unexpected WebSocketState"),
