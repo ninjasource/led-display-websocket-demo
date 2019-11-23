@@ -3,9 +3,6 @@
 
 extern crate panic_itm;
 
-//#[macro_use]
-//extern crate cortex_m;
-
 use core::str::Utf8Error;
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::OutputPin;
@@ -32,6 +29,7 @@ enum WebServerError {
     Io(stm32f1xx_hal::spi::Error),
     WebSocket(ws::Error),
     Utf8Error,
+    Max7219
 }
 
 impl From<stm32f1xx_hal::spi::Error> for WebServerError {
@@ -49,6 +47,13 @@ impl From<ws::Error> for WebServerError {
 impl From<Utf8Error> for WebServerError {
     fn from(_err: Utf8Error) -> WebServerError {
         WebServerError::Utf8Error
+    }
+}
+
+impl<SpiError, PinError> From<max7219_dot_matrix::Error<SpiError, PinError>> for WebServerError {
+    fn from (_err: max7219_dot_matrix::Error<SpiError, PinError>) -> WebServerError {
+        // FIXME: capture more of the error than this simple variant
+        WebServerError::Max7219
     }
 }
 
@@ -123,7 +128,7 @@ fn main() -> ! {
         log_fmt(
             &mut itm.stim[0],
             format_args!("ERROR Unexpected error: {:?}", e),
-        ));
+        )).unwrap();
 
     loop {}
 }
@@ -140,13 +145,13 @@ fn run_loop<PinError, CS1, CS2>(
 {
     log(itm, "[INF] Done initializing");
 
-    max7219.write_command_all(spi, Command::OnOff, 0);
-    max7219.write_command_all(spi, Command::ScanLimit, 7);
-    max7219.write_command_all(spi, Command::DecodeMode, 0);
-    max7219.write_command_all(spi, Command::DisplayTest, 0);
-    max7219.clear_all(spi);
-    max7219.write_command_all(spi, Command::Intensity, 1);
-    max7219.write_command_all(spi, Command::OnOff, 1);
+    max7219.write_command_all(spi, Command::OnOff, 0)?;
+    max7219.write_command_all(spi, Command::ScanLimit, 7)?;
+    max7219.write_command_all(spi, Command::DecodeMode, 0)?;
+    max7219.write_command_all(spi, Command::DisplayTest, 0)?;
+    max7219.clear_all(spi)?;
+    max7219.write_command_all(spi, Command::Intensity, 1)?;
+    max7219.write_command_all(spi, Command::OnOff, 1)?;
 
     loop {
         client_connect(
@@ -160,11 +165,12 @@ fn run_loop<PinError, CS1, CS2>(
                     itm,
                     format_args!("ERROR Unexpected error: {:?}", e),
                 )
-            });
+            }).unwrap();
     }
 }
 
 fn scroll_str<PinError, CS>(max7219: &mut MAX7219<CS>, spi: &mut SpiFullDuplex, message: &str)
+    -> Result<(), WebServerError>
     where
         CS: OutputPin<Error = PinError>,
 {
@@ -175,11 +181,11 @@ fn scroll_str<PinError, CS>(max7219: &mut MAX7219<CS>, spi: &mut SpiFullDuplex, 
     loop {
         pos -= 1;
 
-        max7219.write_str_at_pos(spi, message, pos);
+        max7219.write_str_at_pos(spi, message, pos)?;
 
         // start over
         if pos < to_pos {
-            return;
+            return Ok(());
         }
     }
 }
@@ -279,7 +285,6 @@ fn client_connect<PinError, CS1, CS2>(
     }
 }
 
-
 fn ws_write_back<PinError, CS>(
     spi: &mut SpiFullDuplex,
     socket: Socket,
@@ -334,7 +339,7 @@ where
         WebSocketReceiveMessageType::Text => {
             let message = ::core::str::from_utf8(&ws_buffer[..ws_read_result.len_to])?;
             log_fmt(itm, format_args!("INFO Websocket: {}", &message));
-            scroll_str(max7219, spi, message);
+            scroll_str(max7219, spi, message)?;
         }
         WebSocketReceiveMessageType::Binary => {
             // do nothing
