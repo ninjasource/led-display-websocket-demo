@@ -29,7 +29,7 @@ enum WebServerError {
     Io(stm32f1xx_hal::spi::Error),
     WebSocket(ws::Error),
     Utf8Error,
-    Max7219
+    Max7219,
 }
 
 impl From<stm32f1xx_hal::spi::Error> for WebServerError {
@@ -51,7 +51,7 @@ impl From<Utf8Error> for WebServerError {
 }
 
 impl<SpiError, PinError> From<max7219_dot_matrix::Error<SpiError, PinError>> for WebServerError {
-    fn from (_err: max7219_dot_matrix::Error<SpiError, PinError>) -> WebServerError {
+    fn from(_err: max7219_dot_matrix::Error<SpiError, PinError>) -> WebServerError {
         // FIXME: capture more of the error than this simple variant
         WebServerError::Max7219
     }
@@ -74,13 +74,13 @@ impl Connection {
 }
 
 fn log(itm: &mut Stim, msg: &str) {
-    // TODO: comment these out before demo - itm is not setup correctly without the openocd attached
+    // FIXME: comment these out before demo - itm is not setup correctly without openocd running
     itm::write_str(itm, msg);
     itm::write_str(itm, "\n");
 }
 
 fn log_fmt(itm: &mut Stim, args: Arguments) {
-    // TODO: comment these out before demo - itm is not setup correctly without the openocd attached
+    // FIXME: comment these out before demo - itm is not setup correctly without openocd running
     itm::write_fmt(itm, args);
     itm::write_str(itm, "\n");
 }
@@ -123,12 +123,15 @@ fn main() -> ! {
     let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
     let mut w5500 = W5500::new(&mut cs_ethernet);
 
+
     run_loop(&mut spi, &mut itm.stim[0], &mut max7219, &mut w5500)
-        .map_err(|e|
-        log_fmt(
-            &mut itm.stim[0],
-            format_args!("ERROR Unexpected error: {:?}", e),
-        )).unwrap();
+        .map_err(|e| {
+            log_fmt(
+                &mut itm.stim[0],
+                format_args!("[ERR] Unexpected error: {:?}", e),
+            )
+        })
+        .unwrap();
 
     loop {}
 }
@@ -139,9 +142,9 @@ fn run_loop<PinError, CS1, CS2>(
     max7219: &mut MAX7219<CS1>,
     w5500: &mut W5500<CS2>,
 ) -> Result<(), WebServerError>
-    where
-        CS1: OutputPin<Error = PinError>,
-        CS2: OutputPin<Error = PinError>,
+where
+    CS1: OutputPin<Error = PinError>,
+    CS2: OutputPin<Error = PinError>,
 {
     log(itm, "[INF] Done initializing");
 
@@ -154,26 +157,28 @@ fn run_loop<PinError, CS1, CS2>(
     max7219.write_command_all(spi, Command::OnOff, 1)?;
 
     loop {
-        client_connect(
-            spi,
-            itm,
-            max7219,
-            w5500,
-        )
-            .map_err(|e| {
-                log_fmt(
-                    itm,
-                    format_args!("ERROR Unexpected error: {:?}", e),
-                )
-            }).unwrap();
+        client_connect(spi, itm, max7219, w5500)
+            .map_err(|e| log_fmt(itm, format_args!("[ERR] Unexpected error: {:?}", e)))
+            .unwrap();
     }
 }
 
-fn scroll_str<PinError, CS>(max7219: &mut MAX7219<CS>, spi: &mut SpiFullDuplex, message: &str)
-    -> Result<(), WebServerError>
-    where
-        CS: OutputPin<Error = PinError>,
+fn scroll_str<PinError, CS>(
+    itm: &mut Stim,
+    max7219: &mut MAX7219<CS>,
+    spi: &mut SpiFullDuplex,
+    message: &str,
+) -> Result<(), WebServerError>
+where
+    CS: OutputPin<Error = PinError>,
 {
+    log_fmt(
+        itm,
+        format_args!(
+            "[DBG] Scrolling message with {:?} characters",
+            message.len()
+        ),
+    );
     let from_pos = max7219.get_num_devices() * 8;
     let to_pos = message.len() as i32 * -8;
     let mut pos = from_pos as i32;
@@ -185,6 +190,7 @@ fn scroll_str<PinError, CS>(max7219: &mut MAX7219<CS>, spi: &mut SpiFullDuplex, 
 
         // start over
         if pos < to_pos {
+            log(itm, "[DBG] Done scrolling message");
             return Ok(());
         }
     }
@@ -196,15 +202,17 @@ fn client_connect<PinError, CS1, CS2>(
     max7219: &mut MAX7219<CS1>,
     w5500: &mut W5500<CS2>,
 ) -> Result<(), WebServerError>
-    where
-        CS1: OutputPin<Error = PinError>,
-        CS2: OutputPin<Error = PinError>,
+where
+    CS1: OutputPin<Error = PinError>,
+    CS2: OutputPin<Error = PinError>,
 {
     w5500.set_mode(spi, false, false, false, false)?;
     w5500.set_mac(spi, &MacAddress::new(0x02, 0x01, 0x02, 0x03, 0x04, 0x05))?;
-    w5500.set_ip(spi, &IpAddress::new(192, 168, 137, 33))?;
     w5500.set_subnet(spi, &IpAddress::new(255, 255, 255, 0))?;
-    w5500.set_gateway(spi, &IpAddress::new(192, 168, 137, 1))?;
+    //    w5500.set_ip(spi, &IpAddress::new(192, 168, 137, 33))?;
+    //    w5500.set_gateway(spi, &IpAddress::new(192, 168, 137, 1))?;
+    w5500.set_ip(spi, &IpAddress::new(192, 168, 1, 33))?;
+    w5500.set_gateway(spi, &IpAddress::new(192, 168, 1, 1))?;
 
     // make sure the connection is closed before we start
     let mut connection = Connection::new(Socket::Socket0);
@@ -213,16 +221,24 @@ fn client_connect<PinError, CS1, CS2>(
 
     let mut buffer: [u8; 3000] = [0; 3000];
     let mut ws_buffer: [u8; 500] = [0; 500];
-    let host_ip = IpAddress::new(51, 140, 68, 75);
+    //    let host_ip = IpAddress::new(51, 140, 68, 75);
+    //    let host_port = 80;
+    //    let host = "ninjametal.com";
+    //    let origin = "http://ninjametal.com";
+
+    let host_ip = IpAddress::new(192, 168, 1, 149);
+    let host_port = 1337;
+    let host = "192.168.1.149";
+    let origin = "http://192.168.1.149";
 
     // open
     log_fmt(
         itm,
-        format_args!("INFO TCP Opening {:?}", connection.socket),
+        format_args!("[INF] TCP Opening {:?}", connection.socket),
     );
     let mut web_socket = ws::WebSocket::new_client(EmptyRng::new());
     w5500.open_tcp(spi, connection.socket)?;
-    w5500.connect(spi, Socket::Socket0, &host_ip, 80)?;
+    w5500.connect(spi, Socket::Socket0, &host_ip, host_port)?;
     loop {
         match w5500.get_socket_status(spi, connection.socket) {
             Ok(Some(socket_status)) => {
@@ -231,35 +247,33 @@ fn client_connect<PinError, CS1, CS2>(
                     log_fmt(
                         itm,
                         format_args!(
-                            "INFO Socket status: {:?} -> {:?}",
+                            "[INF] Socket status: {:?} -> {:?}",
                             connection.socket_status, socket_status
                         ),
                     );
-                    if socket_status == SocketStatus::Closed {
-                        log(itm, "");
-                    }
                     connection.socket_status = socket_status;
                 }
                 match socket_status {
+                    SocketStatus::CloseWait | SocketStatus::Closed => {
+                        log(itm, "Attempting to reconnect");
+                        web_socket = ws::WebSocket::new_client(EmptyRng::new());
+                        w5500.open_tcp(spi, connection.socket)?;
+                        w5500.connect(spi, Socket::Socket0, &host_ip, host_port)?;
+                    }
                     SocketStatus::Established => {
                         if web_socket.state == WebSocketState::None {
                             // initiate a websocket opening handshake
                             let websocket_options = WebSocketOptions {
                                 path: "/ws/ledpanel",
-                                host: "ninjametal.com",
-                                origin: "http://ninjametal.com",
+                                host,
+                                origin,
                                 sub_protocols: None,
                                 additional_headers: None,
                             };
                             let (len, _web_socket_key) =
                                 web_socket.client_connect(&websocket_options, &mut ws_buffer)?;
-                            eth_write(
-                                spi,
-                                Socket::Socket0,
-                                w5500,
-                                &mut ws_buffer[..len],
-                                itm,
-                            )?;
+                            log(itm, "[INF] Sending opening websocket handshake");
+                            eth_write(spi, Socket::Socket0, w5500, &ws_buffer[..len], itm)?;
                         }
 
                         eth_read_client(
@@ -277,10 +291,13 @@ fn client_connect<PinError, CS1, CS2>(
                 }
             }
             Ok(None) => {
-                log(itm, "ERROR Unknown socket status");
+                log(itm, "[ERR] Unknown socket status");
                 return Ok(());
             }
-            Err(_e) => log(itm, "ERROR Cannot read socket status"),
+            Err(e) => log_fmt(
+                itm,
+                format_args!("[ERR] Cannot read socket status: {:?}", e),
+            ),
         }
     }
 }
@@ -296,8 +313,8 @@ fn ws_write_back<PinError, CS>(
     send_message_type: WebSocketSendMessageType,
     itm: &mut Stim,
 ) -> Result<(), WebServerError>
-    where
-        CS: OutputPin<Error = PinError>
+where
+    CS: OutputPin<Error = PinError>
 {
     eth_buffer[..count].copy_from_slice(&ws_buffer[..count]);
     let ws_to_send = web_socket.write(send_message_type, true, &eth_buffer[..count], ws_buffer)?;
@@ -305,7 +322,7 @@ fn ws_write_back<PinError, CS>(
     log_fmt(
         itm,
         format_args!(
-            "INFO Websocket encoded {:#?}: {} bytes",
+            "[DBG] Websocket encoded {:#?}: {} bytes",
             send_message_type, ws_to_send
         ),
     );
@@ -331,18 +348,24 @@ where
     log_fmt(
         itm,
         format_args!(
-            "INFO Websocket decoded {:#?}: {} bytes",
+            "[DBG] Websocket decoded {:#?}: {} bytes",
             ws_read_result.message_type, ws_read_result.len_to
         ),
     );
     match ws_read_result.message_type {
         WebSocketReceiveMessageType::Text => {
             let message = ::core::str::from_utf8(&ws_buffer[..ws_read_result.len_to])?;
-            log_fmt(itm, format_args!("INFO Websocket: {}", &message));
-            scroll_str(max7219, spi, message)?;
+            let print_msg = if message.len() > 100 {
+                &message[..100] // limit what we log
+            } else {
+                &message
+            };
+            log_fmt(itm, format_args!("[INF] Websocket: {}", print_msg));
+            scroll_str(itm, max7219, spi, message)?;
         }
         WebSocketReceiveMessageType::Binary => {
             // do nothing
+            log(itm, "[WRN] Binary message ignored");
         }
         WebSocketReceiveMessageType::CloseMustReply => {
             let close_status = ws_read_result.close_status.unwrap(); // this should never fail
@@ -352,14 +375,14 @@ where
                     log_fmt(
                         itm,
                         format_args!(
-                            "INFO Websocket close status {:#?}: {}",
+                            "[INF] Websocket close status {:#?}: {}",
                             close_status, message
                         ),
                     );
                 } else {
                     log_fmt(
                         itm,
-                        format_args!("INFO Websocket close status {:#?}", close_status),
+                        format_args!("[INF] Websocket close status {:#?}", close_status),
                     );
                 }
             }
@@ -376,7 +399,7 @@ where
                 itm,
             )?;
             w5500.close(spi, socket)?;
-            log(itm, "INFO TCP connection closed");
+            log(itm, "[INF] TCP connection closed");
         }
         WebSocketReceiveMessageType::Ping => {
             ws_write_back(
@@ -395,9 +418,9 @@ where
             // do nothing
         }
         WebSocketReceiveMessageType::CloseCompleted => {
-            log(itm, "INFO Websocket close handshake completed");
+            log(itm, "[INF] Websocket close handshake completed");
             w5500.close(spi, socket)?;
-            log(itm, "INFO TCP connection closed");
+            log(itm, "[INF] TCP connection closed");
         }
     }
 
@@ -411,13 +434,16 @@ fn eth_write<PinError, CS>(
     buffer: &[u8],
     itm: &mut Stim,
 ) -> Result<(), WebServerError>
-    where
-        CS: OutputPin<Error = PinError>,
+where
+    CS: OutputPin<Error = PinError>,
 {
     let mut start = 0;
     loop {
         let bytes_sent = w5500.send_tcp(spi, socket, &buffer[start..])?;
-        log_fmt(itm, format_args!("INFO Sent {} bytes", bytes_sent));
+        log_fmt(
+            itm,
+            format_args!("[DBG] Ethernet sent {} bytes", bytes_sent),
+        );
         start += bytes_sent;
 
         if start == buffer.len() {
@@ -442,19 +468,24 @@ where
 {
     let size = w5500.try_receive_tcp(spi, socket, eth_buffer)?;
     if let Some(size) = size {
-        log_fmt(itm, format_args!("INFO Received {} bytes", size));
+        log_fmt(itm, format_args!("[DBG] Ethernet received {} bytes", size));
 
         match web_socket.state {
             WebSocketState::Connecting => {
+                log(itm, "[INF] Reading opening websocket handshake response");
                 let sec_websocket_key = WebSocketKey::new();
                 web_socket.client_accept(&sec_websocket_key, &eth_buffer[..size])?;
+                log(itm, "[INF] Websocket opening handshake complete");
             }
             WebSocketState::Open => {
                 ws_read(
-                    spi, socket,  web_socket, eth_buffer, ws_buffer, size, itm, max7219, w5500
+                    spi, socket, web_socket, eth_buffer, ws_buffer, size, itm, max7219, w5500,
                 )?;
             }
-            _ => log(itm, "Unexpected WebSocketState"),
+            state => log_fmt(
+                itm,
+                format_args!("[ERR] Unexpected WebSocketState: {:#?}", state),
+            ),
         };
     };
 

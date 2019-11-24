@@ -1,36 +1,27 @@
 #[macro_use]
 extern crate log;
 
-use std::time::{Duration, Instant};
 use actix::fut;
 use actix::prelude::*;
 use actix_broker::BrokerIssue;
 use actix_files::Files;
 use actix_web::{web, App, Error, HttpRequest, HttpResponse, HttpServer};
 use actix_web_actors::ws;
-use std::fs::File;
-use std::io::prelude::*;
-use serde::Deserialize;
+use std::time::{Duration, Instant};
 
 mod server;
 use server::*;
-use regex::Regex;
 
-/// How often heartbeat pings are sent
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+/// How often heartbeat pings are sent (should be less than CLIENT_TIMEOUT)
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(25);
 /// How long before lack of client response causes a timeout
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(45);
 
-#[derive(Deserialize)]
-struct Info {
-    f: String,
-}
-
-fn is_room_valid(room: &str) -> bool {
-    return room == "demo";
-}
-
-fn ws_route(room: web::Path<String>, req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
+fn ws_route(
+    room: web::Path<String>,
+    req: HttpRequest,
+    stream: web::Payload,
+) -> Result<HttpResponse, Error> {
     info!("Route: ws/{}", room);
     ws::start(WsSession::new(room.to_string()), &req, stream)
 }
@@ -44,20 +35,15 @@ fn main() -> std::io::Result<()> {
             .service(web::resource("/ws/{room}").route(web::get().to(ws_route)))
             .service(Files::new("/", "wwwroot/").index_file("index.html"))
     })
-        .bind("127.0.0.1:8663")
-      //  .bind("192.168.1.149:1337")
-        .unwrap()
-        .start();
+    //  .bind("127.0.0.1:8663")
+    .bind("192.168.1.149:1337")
+    .unwrap()
+    .start();
 
     info!("Started http server");
     sys.run()
 }
 
-
-
-
-
-//#[derive(Default)]
 struct WsSession {
     id: usize,
     room: String,
@@ -69,9 +55,9 @@ impl WsSession {
     fn new(name: String) -> WsSession {
         WsSession {
             id: 0, // will get an id once they have joined a room
-            room : "rustdudes".to_string(),
-            name : Some(name),
-            hb: Instant::now()
+            room: "rustdudes".to_string(),
+            name: Some(name),
+            hb: Instant::now(),
         }
     }
 
@@ -82,7 +68,7 @@ impl WsSession {
             // check client heartbeats
             if Instant::now().duration_since(act.hb) > CLIENT_TIMEOUT {
                 // heartbeat timed out
-                println!("Websocket Client heartbeat failed, disconnecting!");
+                info!("Websocket Client heartbeat failed, disconnecting!");
 
                 // stop actor
                 ctx.stop();
@@ -211,6 +197,7 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for WsSession {
                     }
                     return;
                 }
+
                 self.send_msg(msg);
             }
             ws::Message::Close(_) => {

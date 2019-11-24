@@ -36,12 +36,7 @@ impl WsServer {
         Some(room)
     }
 
-    fn add_client_to_room(
-        &mut self,
-        room_name: &str,
-        id: Option<usize>,
-        client: Client,
-    ) -> usize {
+    fn add_client_to_room(&mut self, room_name: &str, id: Option<usize>, client: Client) -> usize {
         let mut id = id.unwrap_or_else(rand::random::<usize>);
         if let Some(room) = self.rooms.get_mut(room_name) {
             loop {
@@ -61,12 +56,7 @@ impl WsServer {
         id
     }
 
-    fn send_chat_message(
-        &mut self,
-        room_name: &str,
-        msg: &str,
-        _src: usize,
-    ) -> Option<()> {
+    fn send_chat_message(&mut self, room_name: &str, msg: &str, _src: usize) -> Option<()> {
         let mut room = self.take_room(room_name)?;
         for (id, client) in room.drain() {
             if client.do_send(ChatMessage(msg.to_owned())).is_ok() {
@@ -90,14 +80,8 @@ impl Handler<JoinRoom> for WsServer {
     type Result = MessageResult<JoinRoom>;
 
     fn handle(&mut self, msg: JoinRoom, _ctx: &mut Self::Context) -> Self::Result {
-        let JoinRoom(room_name, client_name, client) = msg;
+        let JoinRoom(room_name, _client_name, client) = msg;
         let id = self.add_client_to_room(&room_name, None, client);
-        let join_msg = format!(
-            "{} joined {}",
-            client_name.unwrap_or_else(|| "anon".to_string()),
-            room_name
-        );
-     //   self.send_chat_message(&room_name, &join_msg, id);
         MessageResult(id)
     }
 }
