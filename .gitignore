@@ -10,3 +10,5 @@ Cargo.lock
 **/*.rs.bk
 .idea/
 led-display-hardware/.vscode/
+led-display-hardware-ssl/.vscode/.cortex-debug.peripherals.state.json
+led-display-hardware-ssl/.vscode/.cortex-debug.registers.state.json

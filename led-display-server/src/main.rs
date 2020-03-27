@@ -13,9 +13,9 @@ mod server;
 use server::*;
 
 /// How often heartbeat pings are sent (should be less than CLIENT_TIMEOUT)
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(25);
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 /// How long before lack of client response causes a timeout
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(45);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn ws_route(
     room: web::Path<String>,
@@ -35,8 +35,8 @@ fn main() -> std::io::Result<()> {
             .service(web::resource("/ws/{room}").route(web::get().to(ws_route)))
             .service(Files::new("/", "wwwroot/").index_file("index.html"))
     })
-    //  .bind("127.0.0.1:8663")
-    .bind("192.168.1.149:1337")
+    //.bind("127.0.0.1:8663")
+    .bind("192.168.1.149:8663")
     .unwrap()
     .start();
 
@@ -198,7 +198,12 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for WsSession {
                     return;
                 }
 
-                self.send_msg(msg);
+                if msg.len() <= 256 {
+                    self.send_msg(msg);
+                }
+                else {
+                    info!("Message length too long (max 256): {:?} bytes", msg.len());
+                }
             }
             ws::Message::Close(_) => {
                 ctx.stop();

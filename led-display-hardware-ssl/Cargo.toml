@@ -1,0 +1,40 @@
+[package]
+name = "bluepill-led-display"
+version = "0.1.0"
+authors = ["David Haig <david@ninjasource.com>"]
+edition = "2018"
+build = "build.rs" # the special build script for linking the bearssl library
+
+[dependencies]
+panic-itm = "0.4"
+nb = "0.1"
+cortex-m-rt = "0.6"
+cortex-m = "0.6"
+embedded-hal = "0.2"
+#embedded-websocket = { path = "../../embedded-websocket" }
+#max7219-dot-matrix = { path = "../../max7219-dot-matrix" }
+#w5500 = { path = "../../w5500" }
+embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket" }
+max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix" }
+w5500 = { git = "https://github.com/ninjasource/w5500" }
+cty = "0.2"
+
+[dependencies.stm32f1xx-hal]
+version = "0.3"
+features = ["stm32f103", "rt"]
+
+[features]
+doc = []
+rt = ["stm32f1xx-hal/rt"]
+stm32f103 = ["stm32f1xx-hal/stm32f103"]
+
+# this allows debugging in release mode (otherwise you only see assembly)
+[profile.release]
+#debug = true
+opt-level = 'z'  # Optimize for size.
+lto = true
+codegen-units = 1
+
+# this makes the binary small enough to fit on the device while still being able to build and upload in debug mode
+[profile.dev]
+opt-level = 's'
