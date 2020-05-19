@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 #![allow(unused_imports)]
-// #![feature(nll)] // turn this on with nightly to see more lifetime borrow checker porn
+// #![feature(nll)] // turn this on with nightly to see more lifetime borrow checker detail
 
 mod bearssl;
 use bearssl::*;
@@ -101,38 +101,19 @@ impl Connection {
     }
 }
 
-/*size_t strlen (const char *str)
-{
-    for (size_t len = 0;;++len) if (str[len]==0) return len;
-}
-
-time_t time(const time_t* _time)
-{
-    return 1591000000;
-}*/
-
-/*
-extern "C" {
-pub fn time(_time: &bearssl::__time_t) -> bearssl::__time_t {
+// no mangle so that the linker can find this function
+// which will be called from BearSSL
+#[no_mangle]
+extern "C" fn time(_time: &bearssl::__time_t) -> bearssl::__time_t {
     1591000000
 }
-}
-extern "C" {
-pub fn strlen(s: &str) -> usize {
+
+// no mangle so that the linker can find this function
+// which will be called from BearSSL
+#[no_mangle]
+extern "C" fn strlen(s: &str) -> usize {
     s.len()
 }
-}
-*/
-/*
-//extern "C" {
-pub fn time(_time: *const bearssl::__time_t) -> bearssl::__time_t {
-    1591000000
-}
-
-pub fn strlen(_str: *const cty::c_char) -> cty::size_t {
-    0
-}*/
-//}
 
 fn _log_no_new_line(itm: &mut Stim, msg: &str) {
     // FIXME: comment these out when not connected to openocd. itm will crash otherwise
@@ -151,10 +132,6 @@ fn log_fmt(itm: &mut Stim, args: Arguments) {
     itm::write_str(itm, "\n");
 }
 
-unsafe extern "C" fn get_time() -> time_t {
-    1591000000
-}
-
 unsafe extern "C" fn sock_read(
     read_context: *mut cty::c_void,
     data: *mut cty::c_uchar,
@@ -162,12 +139,6 @@ unsafe extern "C" fn sock_read(
 ) -> cty::c_int {
     let context: &mut EthContext = &mut *(read_context as *mut EthContext);
     let itm: &mut Stim = &mut *(context.itm as *mut Stim);
-    /*
-        log_fmt(
-            itm,
-            format_args!("[DBG] sock_read attempting to read {} bytes", len),
-        );
-    */
     let buf: &mut [u8] = core::slice::from_raw_parts_mut(data, len as usize);
     let spi: &mut SpiMapleMini = &mut *(context.spi as *mut SpiMapleMini);
     let w5500: &mut W5500Eth = &mut *(context.w5500 as *mut W5500Eth);
@@ -187,17 +158,6 @@ unsafe extern "C" fn sock_read(
     }
 
     0
-
-    /*
-    loop {
-        let size = w5500
-            .try_receive_tcp(spi, Socket::Socket0, &mut buf[..max_len])
-            .unwrap();
-        if let Some(size) = size {
-            log_fmt(itm, format_args!("[DBG] sock_read received {} bytes", size));
-            return size as cty::c_int;
-        }
-    }*/
 }
 
 unsafe extern "C" fn sock_write(
@@ -236,6 +196,7 @@ static mut TA0_DN: [u8; 65] = [
     0x33,
 ];
 
+// for the LetsEncrypt trust anchor
 static mut RSA_N: [u8; 256] = [
     0xDF, 0xAF, 0xE9, 0x97, 0x50, 0x08, 0x83, 0x57, 0xB4, 0xCC, 0x62, 0x65, 0xF6, 0x90, 0x82, 0xEC,
     0xC7, 0xD3, 0x2C, 0x6B, 0x30, 0xCA, 0x5B, 0xEC, 0xD9, 0xC3, 0x7D, 0xC7, 0x40, 0xC1, 0x18, 0x14,
@@ -258,7 +219,7 @@ static mut RSA_N: [u8; 256] = [
 static mut RSA_E: [u8; 3] = [0x01, 0x00, 0x01];
 static mut IO_BUF: [u8; 4096] = [0; 4096];
 
-// NOTE: we want to get real entropy somehow - not this hardcoded entropy
+// NOTE: we want to get real entropy somehow - The entropy below is hardcoded
 static ENTROPY: [u8; 64] = [
     0x04, 0xCD, 0x7D, 0x68, 0x64, 0xC6, 0x5E, 0xED, 0x18, 0x7E, 0xA3, 0x51, 0xDC, 0x1E, 0x32, 0x7E,
     0x50, 0xF1, 0xFC, 0x19, 0xE3, 0x99, 0x53, 0x77, 0xC8, 0x06, 0xB0, 0xE3, 0x3B, 0x26, 0xCD, 0x14,
@@ -330,7 +291,7 @@ fn main() -> ! {
 
     // wait for things to settle
     delay.delay_ms(250_u16);
-    //let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
+    // let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
     let mut w5500: W5500Eth = W5500::new(&mut cs_ethernet);
 
     run_loop(&mut spi, &mut itm.stim[0], &mut w5500)
@@ -423,10 +384,6 @@ fn client_connect(
     // ************************************* SSL INIT **************************************************
     // NOTE: I had trouble putting this INIT functionality into its own function because of all the pointers flying around.
     // Even though I moved some data out of the init function the pointers seemed to corrupt themselves. I just dont understand enough yet.
-
-    unsafe {
-        set_time_callback(Some(get_time));
-    }
 
     log(itm, "[INF] building trust anchors");
     let ta = build_trust_anchor();
