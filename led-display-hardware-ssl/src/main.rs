@@ -24,8 +24,8 @@ use hal::gpio::{
 use hal::{delay::Delay, pac::SPI1, prelude::*, spi::Spi, stm32};
 use panic_itm;
 use ws::{
-    EmptyRng, WebSocket, WebSocketKey, WebSocketOptions, WebSocketReceiveMessageType,
-    WebSocketSendMessageType, WebSocketServer, WebSocketState,
+    EmptyRng, WebSocketClient, WebSocketKey, WebSocketOptions, WebSocketReceiveMessageType,
+    WebSocketSendMessageType, WebSocketState,
 };
 
 type SpiMapleMini = Spi<
@@ -38,6 +38,7 @@ type SpiMapleMini = Spi<
 >;
 
 type W5500Eth<'a> = W5500<'a, PA2<Output<PushPull>>>;
+type WebSocket = WebSocketClient<EmptyRng>;
 
 #[derive(Debug)]
 enum SslError {
@@ -86,7 +87,7 @@ impl<SpiError, PinError> From<max7219_dot_matrix::Error<SpiError, PinError>> for
 }
 
 struct Connection {
-    pub web_socket: WebSocketServer,
+    pub web_socket: WebSocket,
     pub socket: Socket,
     pub socket_status: SocketStatus,
 }
@@ -94,7 +95,7 @@ struct Connection {
 impl Connection {
     fn new(socket: Socket) -> Connection {
         Connection {
-            web_socket: WebSocketServer::new_server(),
+            web_socket: WebSocketClient::new_client(EmptyRng::new()),
             socket,
             socket_status: SocketStatus::Closed,
         }
@@ -374,7 +375,7 @@ fn client_connect(
             &host_ip, host_port, connection.socket
         ),
     );
-    let mut web_socket = ws::WebSocket::new_client(EmptyRng::new());
+    let mut web_socket = ws::WebSocketClient::new_client(EmptyRng::new());
     w5500.open_tcp(spi, connection.socket)?;
     w5500.connect(spi, connection.socket, &host_ip, host_port)?;
 
@@ -480,7 +481,7 @@ fn client_connect(
                 match socket_status {
                     SocketStatus::CloseWait | SocketStatus::Closed => {
                         log(itm, "Attempting to reconnect");
-                        web_socket = ws::WebSocket::new_client(EmptyRng::new());
+                        web_socket = ws::WebSocketClient::new_client(EmptyRng::new());
                         w5500.open_tcp(spi, connection.socket)?;
                         w5500.connect(spi, Socket::Socket0, &host_ip, host_port)?;
                     }
@@ -549,7 +550,7 @@ fn ssl_write(ssl: &mut Ssl, buffer: &[u8], itm: &mut Stim) -> Result<(), WebServ
 
 fn ws_write_back(
     ssl: &mut Ssl,
-    web_socket: &mut WebSocketServer,
+    web_socket: &mut WebSocket,
     eth_buffer: &mut [u8],
     ws_buffer: &mut [u8],
     count: usize,
@@ -573,7 +574,7 @@ fn ws_read(
     ssl_client: &mut Ssl,
     spi: &mut SpiMapleMini,
     socket: Socket,
-    web_socket: &mut WebSocketServer,
+    web_socket: &mut WebSocket,
     eth_buffer: &mut [u8],
     ws_buffer: &mut [u8],
     size: usize,
@@ -706,7 +707,7 @@ fn ssl_read_client(
     ssl: &mut Ssl,
     spi: &mut SpiMapleMini,
     socket: Socket,
-    web_socket: &mut WebSocketServer,
+    web_socket: &mut WebSocket,
     eth_buffer: &mut [u8],
     ws_buffer: &mut [u8],
     itm: &mut Stim,

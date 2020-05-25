@@ -13,8 +13,8 @@ use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
 
 use embedded_websocket as ws;
 use ws::{
-    EmptyRng, WebSocket, WebSocketOptions, WebSocketReceiveMessageType, WebSocketSendMessageType,
-    WebSocketServer, WebSocketState,
+    EmptyRng, WebSocketClient, WebSocketOptions, WebSocketReceiveMessageType,
+    WebSocketSendMessageType, WebSocketServer, WebSocketState,
 };
 
 type SpiFullDuplex = dyn FullDuplex<u8, Error = stm32f1xx_hal::spi::Error>;
@@ -123,7 +123,6 @@ fn main() -> ! {
     let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
     let mut w5500 = W5500::new(&mut cs_ethernet);
 
-
     run_loop(&mut spi, &mut itm.stim[0], &mut max7219, &mut w5500)
         .map_err(|e| {
             log_fmt(
@@ -221,22 +220,22 @@ where
 
     let mut buffer: [u8; 3000] = [0; 3000];
     let mut ws_buffer: [u8; 500] = [0; 500];
-    //    let host_ip = IpAddress::new(51, 140, 68, 75);
-    //    let host_port = 80;
-    //    let host = "ninjametal.com";
-    //    let origin = "http://ninjametal.com";
+    let host_ip = IpAddress::new(51, 140, 68, 75);
+    let host_port = 80;
+    let host = "ninjametal.com";
+    let origin = "http://ninjametal.com";
 
-    let host_ip = IpAddress::new(192, 168, 1, 149);
-    let host_port = 1337;
-    let host = "192.168.1.149";
-    let origin = "http://192.168.1.149";
+    //let host_ip = IpAddress::new(192, 168, 1, 149);
+    //let host_port = 1337;
+    //let host = "192.168.1.149";
+    //let origin = "http://192.168.1.149";
 
     // open
     log_fmt(
         itm,
         format_args!("[INF] TCP Opening {:?}", connection.socket),
     );
-    let mut web_socket = ws::WebSocket::new_client(EmptyRng::new());
+    let mut web_socket = ws::WebSocketClient::new_client(EmptyRng::new());
     w5500.open_tcp(spi, connection.socket)?;
     w5500.connect(spi, Socket::Socket0, &host_ip, host_port)?;
     loop {
@@ -256,7 +255,7 @@ where
                 match socket_status {
                     SocketStatus::CloseWait | SocketStatus::Closed => {
                         log(itm, "Attempting to reconnect");
-                        web_socket = ws::WebSocket::new_client(EmptyRng::new());
+                        web_socket = ws::WebSocketClient::new_client(EmptyRng::new());
                         w5500.open_tcp(spi, connection.socket)?;
                         w5500.connect(spi, Socket::Socket0, &host_ip, host_port)?;
                     }
@@ -306,7 +305,7 @@ fn ws_write_back<PinError, CS>(
     spi: &mut SpiFullDuplex,
     socket: Socket,
     w5500: &mut W5500<CS>,
-    web_socket: &mut WebSocketServer,
+    web_socket: &mut WebSocketClient<EmptyRng>,
     eth_buffer: &mut [u8],
     ws_buffer: &mut [u8],
     count: usize,
@@ -314,7 +313,7 @@ fn ws_write_back<PinError, CS>(
     itm: &mut Stim,
 ) -> Result<(), WebServerError>
 where
-    CS: OutputPin<Error = PinError>
+    CS: OutputPin<Error = PinError>,
 {
     eth_buffer[..count].copy_from_slice(&ws_buffer[..count]);
     let ws_to_send = web_socket.write(send_message_type, true, &eth_buffer[..count], ws_buffer)?;
@@ -332,7 +331,7 @@ where
 fn ws_read<PinError, CS1, CS2>(
     spi: &mut SpiFullDuplex,
     socket: Socket,
-    web_socket: &mut WebSocketServer,
+    web_socket: &mut WebSocketClient<EmptyRng>,
     eth_buffer: &mut [u8],
     ws_buffer: &mut [u8],
     size: usize,
@@ -455,7 +454,7 @@ where
 fn eth_read_client<PinError, CS1, CS2>(
     spi: &mut SpiFullDuplex,
     socket: Socket,
-    web_socket: &mut WebSocket<EmptyRng>,
+    web_socket: &mut WebSocketClient<EmptyRng>, //WebSocket<EmptyRng>,
     eth_buffer: &mut [u8],
     ws_buffer: &mut [u8],
     itm: &mut Stim,

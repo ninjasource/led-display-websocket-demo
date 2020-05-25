@@ -13,7 +13,7 @@ embedded-hal = "0.2"
 #embedded-websocket = { path = "../../embedded-websocket" }
 #max7219-dot-matrix = { path = "../../max7219-dot-matrix" }
 #w5500 = { path = "../../w5500" }
-embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket" }
+embedded-websocket = "0.3"
 max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix" }
 w5500 = { git = "https://github.com/ninjasource/w5500" }
 

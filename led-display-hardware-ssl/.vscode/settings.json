@@ -1,4 +1,7 @@
 {
-    "rust.target": "thumbv7m-none-eabi",
-    "rust.all_targets": false
+    "rust-analyzer.checkOnSave.allTargets": false,
+    "rust-analyzer.checkOnSave.extraArgs": [
+        "--target",
+        "thumbv7m-none-eabi"
+    ],
 }
