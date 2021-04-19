@@ -1,10 +1,20 @@
+#[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+#runner = "arm-none-eabi-gdb -q -x openocd.gdb"
+#rustflags = [
+#  "-C", "link-arg=-Tlink.x",
+#]
+#[build]
+#target = "thumbv7m-none-eabi"
+
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
-runner = "arm-none-eabi-gdb -q -x openocd.gdb"
-# NOTE: after a "cargo run" above you need to enter "continue" in the gdb prompt to run the app
+runner = "probe-run --chip STM32F103CB"
 
 rustflags = [
+  # LLD (shipped with the Rust toolchain) is used as the default linker
+  #"-C", "link-arg=--nmagic",
   "-C", "link-arg=-Tlink.x",
+  #"-C", "link-arg=-Tdefmt.x",
 ]
 
 [build]
-target = "thumbv7m-none-eabi"
+target = "thumbv7m-none-eabi"    # Cortex-M3

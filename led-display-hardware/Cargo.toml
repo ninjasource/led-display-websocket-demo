@@ -1,5 +1,5 @@
 [package]
-name = "bluepill-led-display"
+name = "led-display-hardware"
 version = "0.1.0"
 authors = ["David Haig <david@ninjasource.com>"]
 edition = "2018"
@@ -13,18 +13,29 @@ embedded-hal = "0.2"
 #embedded-websocket = { path = "../../embedded-websocket" }
 #max7219-dot-matrix = { path = "../../max7219-dot-matrix" }
 #w5500 = { path = "../../w5500" }
-embedded-websocket = "0.3"
+embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket", default-features = false }
 max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix" }
-w5500 = { git = "https://github.com/ninjasource/w5500" }
+#w5500 = { git = "https://github.com/ninjasource/w5500" }
+shared-bus = "0.2.0"
+w5500 = { path = "../../w5500" }
 
 [dependencies.stm32f1xx-hal]
 version = "0.3"
 features = ["stm32f103", "rt"]
 
 [features]
-doc = []
-rt = ["stm32f1xx-hal/rt"]
-stm32f103 = ["stm32f1xx-hal/stm32f103"]
+#doc = []
+#rt = ["stm32f1xx-hal/rt"]
+#stm32f103 = ["stm32f1xx-hal/stm32f103"]
+default = [
+    "defmt-default",
+]
+defmt-default = []
+defmt-trace = []
+defmt-debug = []
+defmt-info = []
+defmt-warn = []
+defmt-error = []
 
 # this allows debugging in release mode (otherwise you only see assembly)
 [profile.release]
