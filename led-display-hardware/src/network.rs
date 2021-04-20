@@ -14,8 +14,6 @@ use stm32f1xx_hal::{
 };
 use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
 
-use crate::{log, log_fmt};
-
 #[derive(Debug)]
 pub enum NetworkError {
     Connect,
@@ -76,7 +74,6 @@ impl Connection {
 pub struct TcpStream<'a, CS, SPI> {
     w5500: &'a mut W5500<'a, CS, SPI>,
     connection: Connection,
-    itm: &'a mut Stim,
 }
 
 impl<'a, CS, PinError, SPI, SpiError> TcpStream<'a, CS, SPI>
@@ -85,13 +82,9 @@ where
     SPI: Transfer<u8, Error = SpiError>,
     SpiError: core::fmt::Debug,
 {
-    pub fn new(w5500: &'a mut W5500<'a, CS, SPI>, socket: Socket, itm: &'a mut Stim) -> Self {
+    pub fn new(w5500: &'a mut W5500<'a, CS, SPI>, socket: Socket) -> Self {
         let connection = Connection::new(Socket::Socket0);
-        Self {
-            w5500,
-            connection,
-            itm,
-        }
+        Self { w5500, connection }
     }
 
     fn wait_for_is_connected(&mut self) -> Result<(), SpiError> {
@@ -99,7 +92,7 @@ where
             match self.w5500.get_socket_status(self.connection.socket)? {
                 Some(status) => {
                     if status != self.connection.socket_status {
-                        log_fmt(self.itm, format_args!("[INF] Socket Status {:?}", status));
+                        rprintln!("[INF] Socket Status {:?}", status);
                         self.connection.socket_status = status;
                     }
 
@@ -124,7 +117,9 @@ where
     }
 
     pub fn connect(&mut self, host_ip: &IpAddress, host_port: u16) -> Result<(), SpiError> {
+        rprintln!("[INF] Connecting to {}:{}", host_ip, host_port);
         self.w5500.set_mode(false, false, false, false)?;
+        rprintln!("[INF] Set mode complete");
         self.w5500
             .set_mac(&MacAddress::new(0x02, 0x01, 0x02, 0x03, 0x04, 0x05))?;
         self.w5500.set_subnet(&IpAddress::new(255, 255, 255, 0))?;
@@ -134,15 +129,11 @@ where
             .set_protocol(self.connection.socket, w5500::Protocol::TCP)?;
         self.w5500.dissconnect(self.connection.socket)?;
         self.w5500.open_tcp(self.connection.socket)?;
-
-        log_fmt(
-            self.itm,
-            format_args!("[INF] Connecting to {}:{}", host_ip, host_port),
-        );
+        rprintln!("[INF] TCP Opened");
 
         self.w5500.connect(Socket::Socket0, host_ip, host_port)?;
         self.wait_for_is_connected()?;
-        log(self.itm, "[INF] Client connected");
+        rprintln!("[INF] Client connected");
         Ok(())
     }
 }
@@ -154,7 +145,7 @@ where
     SpiError: core::fmt::Debug,
 {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, IoError> {
-        log(self.itm, "[INF] Read: Waiting for bytes");
+        rprintln!("[INF] Read: Waiting for bytes");
 
         loop {
             self.wait_for_is_connected().map_err(|_| IoError::Read)?;
@@ -164,13 +155,10 @@ where
                 .map_err(|_| IoError::Read)?
             {
                 Some(len) => {
-                    log_fmt(self.itm, format_args!("[INF] Read: Received {} bytes", len));
+                    rprintln!("[INF] Read: Received {} bytes", len);
                     return Ok(len);
                 }
-                None => {
-                    //log(self.itm, "[INF] Read: Connected, read 0 bytes");
-                    //Ok(0)
-                }
+                None => {}
             };
         }
     }
@@ -184,10 +172,7 @@ where
 {
     fn write_all(&mut self, buf: &[u8]) -> Result<(), IoError> {
         let mut start = 0;
-        log_fmt(
-            self.itm,
-            format_args!("[INF] Write: Sending {} bytes", buf.len()),
-        );
+        rprintln!("[INF] Write: Sending {} bytes", buf.len());
 
         loop {
             self.wait_for_is_connected().map_err(|_| IoError::Read)?;
@@ -196,10 +181,7 @@ where
                 .send_tcp(self.connection.socket, &buf[start..])
                 .map_err(|_| IoError::Write)?;
             start += bytes_sent;
-            log_fmt(
-                self.itm,
-                format_args!("[INF] Write: Sent {} bytes", bytes_sent),
-            );
+            rprintln!("[INF] Write: Sent {} bytes", bytes_sent);
 
             if start == buf.len() {
                 return Ok(());

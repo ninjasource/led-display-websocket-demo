@@ -2,10 +2,28 @@
 #![no_main]
 #![allow(warnings)]
 
-extern crate panic_itm;
+//#[macro_use]
+//extern crate lazy_static;
 
-use core::{cell::RefCell, fmt::Arguments, str::Utf8Error};
-use cortex_m::{itm, peripheral::itm::Stim};
+//extern crate panic_itm;
+
+#[macro_use]
+extern crate rtt_target;
+
+use rtt_target::{rprintln, rtt_init_print};
+
+use core::{
+    borrow::{Borrow, BorrowMut},
+    cell::{Cell, RefCell},
+    fmt::Arguments,
+    str::Utf8Error,
+};
+use cortex_m::{
+    asm,
+    interrupt::{self, Mutex},
+    itm,
+    peripheral::{itm::Stim, ITM},
+};
 use cortex_m_rt::entry;
 use display::LedPanel;
 use embedded_hal::blocking::spi::Transfer;
@@ -82,25 +100,23 @@ impl<SpiError, PinError> From<max7219_dot_matrix::Error<SpiError, PinError>> for
     }
 }
 
-pub(crate) fn log(itm: &mut Stim, msg: &str) {
-    // FIXME: comment these out before demo - itm is not setup correctly without openocd running
-    itm::write_str(itm, msg);
-    itm::write_str(itm, "\n");
-}
 
-pub(crate) fn log_fmt(itm: &mut Stim, args: Arguments) {
-    // FIXME: comment these out before demo - itm is not setup correctly without openocd running
-    itm::write_fmt(itm, args);
-    itm::write_str(itm, "\n");
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    rprintln!("{}", info);
+    loop {
+        asm::bkpt() // halt = exit probe-run
+    }
 }
 
 #[entry]
 fn main() -> ! {
+    rtt_init_print!();
+    rprintln!("[INF] Initializing");
+
     // general peripheral setup
     let mut cp: cortex_m::Peripherals = cortex_m::Peripherals::take().unwrap();
     let dp = stm32::Peripherals::take().unwrap();
-    let itm = &mut cp.ITM;
-    log(&mut itm.stim[0], "[INF] Initializing");
 
     let mut rcc = dp.RCC.constrain();
     let mut afio = dp.AFIO.constrain(&mut rcc.apb2);
@@ -130,6 +146,7 @@ fn main() -> ! {
 
     // wait for things to settle
     delay.delay_ms(250_u16);
+    rprintln!("[INF] Done initialising");
 
     // used to share the spi bus
     let bus = shared_bus::BusManagerSimple::new(spi);
@@ -146,16 +163,16 @@ fn main() -> ! {
         let mut w5500 = W5500::new(&mut cs_ethernet, ethernet_spi);
         //let mut network_card = NetworkCard::new(w5500, bus.acquire_spi());
 
-        client_connect(&mut led_panel, &mut w5500, &mut itm.stim[0]).unwrap();
+        client_connect(&mut led_panel, &mut w5500).unwrap();
     }
 }
 
 fn client_connect<'a>(
     _led_panel: &mut LedPanel,
     w5500: &'a mut EthernetCard<'a>,
-    itm: &'a mut Stim,
 ) -> Result<(), LedDemoError> {
-    log(itm, "[INF] Client connecting");
+    rprintln!("[INF] Client connecting");
+
     let host_ip = IpAddress::new(51, 140, 68, 75);
     let host_port = 80;
     let host = "ninjametal.com";
@@ -166,9 +183,8 @@ fn client_connect<'a>(
     //let host = "192.168.1.149";
     //let origin = "http://192.168.1.149";
 
-    let mut stream = TcpStream::new(w5500, Socket::Socket0, itm);
+    let mut stream = TcpStream::new(w5500, Socket::Socket0);
     stream.connect(&host_ip, host_port)?;
-    //   log(itm, "[INF] Client connected");
 
     let mut websocket = ws::WebSocketClient::new_client(EmptyRng::new());
     let mut read_buf = [0; 512];
@@ -192,10 +208,12 @@ fn client_connect<'a>(
 
     //  log(itm, "[INF] Websocket sending connect handshake");
     framer.connect(&mut stream, &websocket_options)?;
+    rprintln!("[INF] Websocket opening handshake complete");
     //    log(itm, "[INF] Websocket connected");
     while let Some(text) = framer.read_text(&mut stream, &mut frame_buf)? {
         //log_fmt(itm, format_args!("[INF] Received: {}", text));
 
+        rprintln!("[INF] Websocket received: {}", text);
         // TODO: log and scroll message
     }
 
