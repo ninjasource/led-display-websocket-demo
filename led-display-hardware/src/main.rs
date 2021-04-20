@@ -82,13 +82,13 @@ impl<SpiError, PinError> From<max7219_dot_matrix::Error<SpiError, PinError>> for
     }
 }
 
-fn log(itm: &mut Stim, msg: &str) {
+pub(crate) fn log(itm: &mut Stim, msg: &str) {
     // FIXME: comment these out before demo - itm is not setup correctly without openocd running
     itm::write_str(itm, msg);
     itm::write_str(itm, "\n");
 }
 
-fn log_fmt(itm: &mut Stim, args: Arguments) {
+pub(crate) fn log_fmt(itm: &mut Stim, args: Arguments) {
     // FIXME: comment these out before demo - itm is not setup correctly without openocd running
     itm::write_fmt(itm, args);
     itm::write_str(itm, "\n");
@@ -146,14 +146,16 @@ fn main() -> ! {
         let mut w5500 = W5500::new(&mut cs_ethernet, ethernet_spi);
         //let mut network_card = NetworkCard::new(w5500, bus.acquire_spi());
 
-        client_connect(&mut led_panel, &mut w5500).unwrap();
+        client_connect(&mut led_panel, &mut w5500, &mut itm.stim[0]).unwrap();
     }
 }
 
 fn client_connect<'a>(
     _led_panel: &mut LedPanel,
     w5500: &'a mut EthernetCard<'a>,
+    itm: &'a mut Stim,
 ) -> Result<(), LedDemoError> {
+    log(itm, "[INF] Client connecting");
     let host_ip = IpAddress::new(51, 140, 68, 75);
     let host_port = 80;
     let host = "ninjametal.com";
@@ -164,8 +166,10 @@ fn client_connect<'a>(
     //let host = "192.168.1.149";
     //let origin = "http://192.168.1.149";
 
-    let mut stream = TcpStream::new(w5500, Socket::Socket0);
+    let mut stream = TcpStream::new(w5500, Socket::Socket0, itm);
     stream.connect(&host_ip, host_port)?;
+    //   log(itm, "[INF] Client connected");
+
     let mut websocket = ws::WebSocketClient::new_client(EmptyRng::new());
     let mut read_buf = [0; 512];
     let mut read_cursor = 0;
@@ -186,8 +190,12 @@ fn client_connect<'a>(
         additional_headers: None,
     };
 
+    //  log(itm, "[INF] Websocket sending connect handshake");
     framer.connect(&mut stream, &websocket_options)?;
-    while let Some(_text) = framer.read_text(&mut stream, &mut frame_buf)? {
+    //    log(itm, "[INF] Websocket connected");
+    while let Some(text) = framer.read_text(&mut stream, &mut frame_buf)? {
+        //log_fmt(itm, format_args!("[INF] Received: {}", text));
+
         // TODO: log and scroll message
     }
 
