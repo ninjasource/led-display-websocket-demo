@@ -1,6 +1,5 @@
-use core::{borrow::BorrowMut, usize};
+//use core::usize;
 
-use cortex_m::peripheral::itm::Stim;
 use embedded_hal::{blocking::spi::Transfer, digital::v2::OutputPin};
 use embedded_websocket::framer::{IoError, Read, Write};
 use shared_bus::{NullMutex, SpiProxy};
@@ -10,13 +9,12 @@ use stm32f1xx_hal::{
         Alternate, Floating, Input, Output, PushPull,
     },
     pac::SPI1,
-    spi::Spi,
+    spi::{Spi, Spi1NoRemap},
 };
 use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
 
 #[derive(Debug)]
 pub enum NetworkError {
-    Connect,
     Io(stm32f1xx_hal::spi::Error),
 }
 
@@ -37,11 +35,13 @@ pub(crate) type EthernetCard<'a> = W5500<
         NullMutex<
             Spi<
                 SPI1,
+                Spi1NoRemap,
                 (
                     PA5<Alternate<PushPull>>,
                     PA6<Input<Floating>>,
                     PA7<Alternate<PushPull>>,
                 ),
+                u8,
             >,
         >,
     >,
@@ -83,7 +83,7 @@ where
     SpiError: core::fmt::Debug,
 {
     pub fn new(w5500: &'a mut W5500<'a, CS, SPI>, socket: Socket) -> Self {
-        let connection = Connection::new(Socket::Socket0);
+        let connection = Connection::new(socket);
         Self { w5500, connection }
     }
 
@@ -119,7 +119,6 @@ where
     pub fn connect(&mut self, host_ip: &IpAddress, host_port: u16) -> Result<(), SpiError> {
         rprintln!("[INF] Connecting to {}:{}", host_ip, host_port);
         self.w5500.set_mode(false, false, false, false)?;
-        rprintln!("[INF] Set mode complete");
         self.w5500
             .set_mac(&MacAddress::new(0x02, 0x01, 0x02, 0x03, 0x04, 0x05))?;
         self.w5500.set_subnet(&IpAddress::new(255, 255, 255, 0))?;
@@ -129,7 +128,6 @@ where
             .set_protocol(self.connection.socket, w5500::Protocol::TCP)?;
         self.w5500.dissconnect(self.connection.socket)?;
         self.w5500.open_tcp(self.connection.socket)?;
-        rprintln!("[INF] TCP Opened");
 
         self.w5500.connect(Socket::Socket0, host_ip, host_port)?;
         self.wait_for_is_connected()?;
@@ -187,6 +185,5 @@ where
                 return Ok(());
             }
         }
-        Ok(())
     }
 }

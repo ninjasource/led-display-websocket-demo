@@ -5,39 +5,24 @@ authors = ["David Haig <david@ninjasource.com>"]
 edition = "2018"
 
 [dependencies]
-panic-itm = "0.4"
-nb = "0.1"
-cortex-m-rt = "0.6.10"
-cortex-m = "0.6"
-embedded-hal = "0.2"
+#panic-itm = "0.4"
+#nb = "0.1"
+cortex-m-rt = "0.6.13"
+cortex-m = "0.7.2"
+embedded-hal = "0.2.4"
 #embedded-websocket = { path = "../../embedded-websocket" }
 #max7219-dot-matrix = { path = "../../max7219-dot-matrix" }
 #w5500 = { path = "../../w5500" }
 embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket", default-features = false }
-max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix" }
+#max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix" }
 #w5500 = { git = "https://github.com/ninjasource/w5500" }
 shared-bus = "0.2.0"
 w5500 = { path = "../../w5500" }
-lazy_static = { version = "1.4.0", default-features = false, features = ["spin_no_std"] }
+max7219-dot-matrix = { path = "../../max7219-dot-matrix" }
+stm32f1xx-hal = { version = "0.7", features = ["stm32f103", "rt"] }
+
+# this is for logging
 rtt-target = { version = "0.3.0", features = ["cortex-m"] }
-
-[dependencies.stm32f1xx-hal]
-version = "0.3"
-features = ["stm32f103", "rt"]
-
-[features]
-#doc = []
-#rt = ["stm32f1xx-hal/rt"]
-#stm32f103 = ["stm32f1xx-hal/stm32f103"]
-default = [
-    "defmt-default",
-]
-defmt-default = []
-defmt-trace = []
-defmt-debug = []
-defmt-info = []
-defmt-warn = []
-defmt-error = []
 
 # this allows debugging in release mode (otherwise you only see assembly)
 [profile.release]
