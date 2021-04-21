@@ -12,13 +12,12 @@ cortex-m = "0.7.2"
 embedded-hal = "0.2.4"
 #embedded-websocket = { path = "../../embedded-websocket" }
 #max7219-dot-matrix = { path = "../../max7219-dot-matrix" }
-#w5500 = { path = "../../w5500" }
 embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket", default-features = false }
-#max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix" }
-#w5500 = { git = "https://github.com/ninjasource/w5500" }
+max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix" }
+w5500 = { git = "https://github.com/ninjasource/w5500", branch="refactor" }
 shared-bus = "0.2.0"
-w5500 = { path = "../../w5500" }
-max7219-dot-matrix = { path = "../../max7219-dot-matrix" }
+#w5500 = { path = "../../w5500" }
+#max7219-dot-matrix = { path = "../../max7219-dot-matrix" }
 stm32f1xx-hal = { version = "0.7", features = ["stm32f103", "rt"] }
 
 # this is for logging
