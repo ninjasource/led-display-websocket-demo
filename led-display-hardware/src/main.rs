@@ -7,7 +7,7 @@ extern crate rtt_target;
 
 use cortex_m::asm;
 use cortex_m_rt::entry;
-use display::{DisplayError, LedPanel};
+use display::{LedPanel, Max7219Error};
 use embedded_hal::{blocking::spi::Transfer, spi::Mode, spi::Phase, spi::Polarity};
 use embedded_websocket as ws;
 use max7219_dot_matrix::MAX7219;
@@ -26,13 +26,13 @@ mod network;
 #[derive(Debug)]
 enum LedDemoError {
     Spi(SpiError),
-    Display(DisplayError),
+    Display(Max7219Error),
     Network(NetworkError),
     Framer(FramerError),
 }
 
-impl From<DisplayError> for LedDemoError {
-    fn from(err: DisplayError) -> LedDemoError {
+impl From<Max7219Error> for LedDemoError {
+    fn from(err: Max7219Error) -> LedDemoError {
         LedDemoError::Display(err)
     }
 }
@@ -121,14 +121,11 @@ fn main() -> ! {
     }
 }
 
-fn client_connect<'a, SPI>(
+fn client_connect<'a>(
     led_panel: &mut LedPanel,
-    led_spi: &mut SPI,
+    led_spi: &mut dyn Transfer<u8, Error = SpiError>,
     w5500: &'a mut EthernetCard<'a>,
-) -> Result<(), LedDemoError>
-where
-    SPI: Transfer<u8, Error = SpiError>,
-{
+) -> Result<(), LedDemoError> {
     rprintln!("[INF] Client connecting");
 
     let host_ip = IpAddress::new(51, 140, 68, 75);
@@ -148,7 +145,7 @@ where
     let mut read_buf = [0; 512];
     let mut read_cursor = 0;
     let mut write_buf = [0; 512];
-    let mut frame_buf = [0; 4096];
+    let mut frame_buf = [0; 50];
     let mut framer = Framer::new(
         &mut read_buf,
         &mut read_cursor,
