@@ -1,9 +1,11 @@
-//use core::usize;
+use core::cell::RefCell;
 
+use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
 use embedded_hal::{blocking::spi::Transfer, digital::v2::OutputPin};
 use embedded_websocket::framer::{IoError, Read, Write};
 use shared_bus::{NullMutex, SpiProxy};
 use stm32f1xx_hal::{
+    delay::Delay,
     gpio::{
         gpioa::{PA2, PA5, PA6, PA7},
         Alternate, Floating, Input, Output, PushPull,
@@ -13,13 +15,17 @@ use stm32f1xx_hal::{
 };
 use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
 
+use crate::SpiError;
+
 #[derive(Debug)]
 pub enum NetworkError {
     Io(stm32f1xx_hal::spi::Error),
+    Closed,
+    SocketStatusNone,
 }
 
-impl From<stm32f1xx_hal::spi::Error> for NetworkError {
-    fn from(err: stm32f1xx_hal::spi::Error) -> NetworkError {
+impl From<SpiError> for NetworkError {
+    fn from(err: SpiError) -> NetworkError {
         NetworkError::Io(err)
     }
 }
@@ -47,16 +53,6 @@ pub(crate) type EthernetCard<'a> = W5500<
     >,
 >;
 
-/*
-
-impl<SpiError, PinError> From<max7219_dot_matrix::Error<SpiError, PinError>> for WebServerError {
-    fn from(_err: max7219_dot_matrix::Error<SpiError, PinError>) -> WebServerError {
-        // FIXME: capture more of the error than this simple variant
-        WebServerError::Max7219
-    }
-}
-*/
-
 struct Connection {
     pub socket: Socket,
     pub socket_status: SocketStatus,
@@ -74,20 +70,28 @@ impl Connection {
 pub struct TcpStream<'a, CS, SPI> {
     w5500: &'a mut W5500<'a, CS, SPI>,
     connection: Connection,
+    delay: &'a RefCell<Delay>,
 }
 
-impl<'a, CS, PinError, SPI, SpiError> TcpStream<'a, CS, SPI>
+impl<'a, CS, PinError, SPI> TcpStream<'a, CS, SPI>
 where
     CS: OutputPin<Error = PinError>,
     SPI: Transfer<u8, Error = SpiError>,
-    SpiError: core::fmt::Debug,
 {
-    pub fn new(w5500: &'a mut W5500<'a, CS, SPI>, socket: Socket) -> Self {
+    pub fn new(
+        w5500: &'a mut W5500<'a, CS, SPI>,
+        socket: Socket,
+        delay: &'a RefCell<Delay>,
+    ) -> Self {
         let connection = Connection::new(socket);
-        Self { w5500, connection }
+        Self {
+            w5500,
+            connection,
+            delay,
+        }
     }
 
-    fn wait_for_is_connected(&mut self) -> Result<(), SpiError> {
+    fn wait_for_is_connected(&mut self) -> Result<(), NetworkError> {
         loop {
             match self.w5500.get_socket_status(self.connection.socket)? {
                 Some(status) => {
@@ -98,25 +102,22 @@ where
 
                     match status {
                         SocketStatus::CloseWait | SocketStatus::Closed => {
-                            // TODO: return error
-                            return Ok(());
+                            return Err(NetworkError::Closed)
                         }
                         SocketStatus::Established => {
                             return Ok(());
                         }
                         _ => {
-                            // continue looping
+                            self.delay.borrow_mut().delay_ms(5_u16);
                         }
                     }
                 }
-                None => {
-                    // TODO: error (maybe)
-                }
+                None => return Err(NetworkError::SocketStatusNone),
             }
         }
     }
 
-    pub fn connect(&mut self, host_ip: &IpAddress, host_port: u16) -> Result<(), SpiError> {
+    pub fn connect(&mut self, host_ip: &IpAddress, host_port: u16) -> Result<(), NetworkError> {
         rprintln!("[INF] Connecting to {}:{}", host_ip, host_port);
         self.w5500.set_mode(false, false, false, false)?;
         self.w5500
@@ -136,11 +137,10 @@ where
     }
 }
 
-impl<'a, CS, PinError, SPI, SpiError> Read for TcpStream<'a, CS, SPI>
+impl<'a, CS, PinError, SPI> Read for TcpStream<'a, CS, SPI>
 where
     CS: OutputPin<Error = PinError>,
     SPI: Transfer<u8, Error = SpiError>,
-    SpiError: core::fmt::Debug,
 {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, IoError> {
         rprintln!("[INF] Read: Waiting for bytes");
@@ -156,17 +156,18 @@ where
                     rprintln!("[INF] Read: Received {} bytes", len);
                     return Ok(len);
                 }
-                None => {}
+                None => {
+                    self.delay.borrow_mut().delay_ms(10_u16);
+                }
             };
         }
     }
 }
 
-impl<'a, CS, PinError, SPI, SpiError> Write for TcpStream<'a, CS, SPI>
+impl<'a, CS, PinError, SPI> Write for TcpStream<'a, CS, SPI>
 where
     CS: OutputPin<Error = PinError>,
     SPI: Transfer<u8, Error = SpiError>,
-    SpiError: core::fmt::Debug,
 {
     fn write_all(&mut self, buf: &[u8]) -> Result<(), IoError> {
         let mut start = 0;

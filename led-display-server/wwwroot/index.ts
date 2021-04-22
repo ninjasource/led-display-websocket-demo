@@ -1,11 +1,14 @@
 const nicknameInput: HTMLInputElement = document.querySelector('input#nickname');
 const errorLabel: HTMLLabelElement = document.querySelector('label#error');
+const chatErrorLabel: HTMLLabelElement = document.querySelector('label#chatError');
 const messageInput: HTMLInputElement = document.querySelector('input#message');
 
 
 // div sections
 const landingPageSection: HTMLElement = document.querySelector('div#landingPageSection');
 const chatSection: HTMLElement = document.querySelector('div#chatSection');
+//const errorSection: HTMLElement = document.querySelector('div#errorMessage');
+
 
 function setSectionVisible(section: HTMLElement) {
 
@@ -63,6 +66,10 @@ class WsSignaller {
 
 let ws = new WsSignaller("nobody");
 
+function isASCII(str) {
+    return /^[\x00-\xFF]*$/.test(str);
+}
+
 function connectClick() {
     let nickname = nicknameInput.value;
     console.log(nickname);
@@ -77,13 +84,22 @@ function connectClick() {
 }
 
 function messageChanged() {
+    chatErrorLabel.innerHTML = null;
     let msg = messageInput.value;
     console.log(msg);
 
     if (msg == null || msg.length == 0 || msg.length > 100) {
-        // log out of range
+        chatErrorLabel.innerHTML = 'Please enter ASCII text between 0 and 100 characters';
         return;
     }
+
+    if (!isASCII(msg)) {
+        chatErrorLabel.innerHTML = 'Please enter ASCII text as unicode cannot be rendered on the Led Display';
+        return;
+    }
+
+    // reconnect if our browser has somehow disconnected (safari aka the new IExplorer)
+    ws.reconnect();
 
     ws.send(msg);
     messageInput.value = null;

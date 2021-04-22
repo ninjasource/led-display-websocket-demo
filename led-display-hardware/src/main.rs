@@ -5,10 +5,11 @@
 #[macro_use]
 extern crate rtt_target;
 
+use core::cell::RefCell;
 use cortex_m::asm;
 use cortex_m_rt::entry;
-use display::{LedPanel, Max7219Error};
-use embedded_hal::{blocking::spi::Transfer, spi::Mode, spi::Phase, spi::Polarity};
+use display::{LedPanel, LedPanelError};
+use embedded_hal::{spi::Mode, spi::Phase, spi::Polarity};
 use embedded_websocket as ws;
 use max7219_dot_matrix::MAX7219;
 use network::{EthernetCard, NetworkError, TcpStream};
@@ -26,13 +27,13 @@ mod network;
 #[derive(Debug)]
 enum LedDemoError {
     Spi(SpiError),
-    Display(Max7219Error),
+    Display(LedPanelError),
     Network(NetworkError),
     Framer(FramerError),
 }
 
-impl From<Max7219Error> for LedDemoError {
-    fn from(err: Max7219Error) -> LedDemoError {
+impl From<LedPanelError> for LedDemoError {
+    fn from(err: LedPanelError) -> LedDemoError {
         LedDemoError::Display(err)
     }
 }
@@ -78,7 +79,9 @@ fn main() -> ! {
     let mut afio = dp.AFIO.constrain(&mut rcc.apb2);
     let mut flash = dp.FLASH.constrain();
     let clocks = rcc.cfgr.freeze(&mut flash.acr);
-    let mut delay = Delay::new(cp.SYST, clocks);
+    let delay = Delay::new(cp.SYST, clocks);
+
+    let delay = RefCell::new(delay);
 
     // spi setup
     let mut gpioa = dp.GPIOA.split(&mut rcc.apb2);
@@ -101,7 +104,7 @@ fn main() -> ! {
     );
 
     // wait for things to settle
-    delay.delay_ms(250_u16);
+    delay.borrow_mut().delay_ms(250_u16);
     rprintln!("[INF] Done initialising");
 
     // used to share the spi bus
@@ -111,20 +114,29 @@ fn main() -> ! {
         // setup led panel
         let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
         let mut led_spi = bus.acquire_spi();
-        let mut led_panel = LedPanel::new(&mut max7219, &mut led_spi).unwrap();
+        let mut led_panel = match LedPanel::new(&mut max7219, &mut led_spi) {
+            Ok(x) => x,
+            Err(error) => {
+                rprintln!("[ERR] LedPanel: {:?}", &error);
+                continue;
+            }
+        };
 
         // setup ethernet card
         let ethernet_spi = &mut bus.acquire_spi();
         let mut w5500 = W5500::new(&mut cs_ethernet, ethernet_spi);
 
-        client_connect(&mut led_panel, &mut led_spi, &mut w5500).unwrap();
+        match client_connect(&mut led_panel, &mut w5500, &delay) {
+            Ok(()) => rprintln!("[INF] Connection closed"),
+            Err(error) => rprintln!("[ERR] {:?}", &error),
+        }
     }
 }
 
 fn client_connect<'a>(
     led_panel: &mut LedPanel,
-    led_spi: &mut dyn Transfer<u8, Error = SpiError>,
     w5500: &'a mut EthernetCard<'a>,
+    delay: &'a RefCell<Delay>,
 ) -> Result<(), LedDemoError> {
     rprintln!("[INF] Client connecting");
 
@@ -138,14 +150,14 @@ fn client_connect<'a>(
     //let host = "192.168.1.149";
     //let origin = "http://192.168.1.149";
 
-    let mut stream = TcpStream::new(w5500, Socket::Socket0);
+    let mut stream = TcpStream::new(w5500, Socket::Socket0, delay);
     stream.connect(&host_ip, host_port)?;
 
     let mut websocket = ws::WebSocketClient::new_client(EmptyRng::new());
     let mut read_buf = [0; 512];
     let mut read_cursor = 0;
     let mut write_buf = [0; 512];
-    let mut frame_buf = [0; 50];
+    let mut frame_buf = [0; 1024];
     let mut framer = Framer::new(
         &mut read_buf,
         &mut read_cursor,
@@ -167,7 +179,11 @@ fn client_connect<'a>(
     // read one message at a time and display it
     while let Some(message) = framer.read_text(&mut stream, &mut frame_buf)? {
         rprintln!("[INF] Websocket received: {}", message);
-        led_panel.scroll_str(led_spi, message)?;
+
+        // NOTE: a delay causes the crash too when we receive more than one frame without going back to "Waiting for bytes"
+        // _delay.delay_ms(2000_u16);
+
+        led_panel.scroll_str(message)?;
     }
 
     Ok(())
