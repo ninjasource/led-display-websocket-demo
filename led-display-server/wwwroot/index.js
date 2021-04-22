@@ -1,9 +1,11 @@
 var nicknameInput = document.querySelector('input#nickname');
 var errorLabel = document.querySelector('label#error');
+var chatErrorLabel = document.querySelector('label#chatError');
 var messageInput = document.querySelector('input#message');
 // div sections
 var landingPageSection = document.querySelector('div#landingPageSection');
 var chatSection = document.querySelector('div#chatSection');
+//const errorSection: HTMLElement = document.querySelector('div#errorMessage');
 function setSectionVisible(section) {
     // set all sections to invisible
     landingPageSection.style.display = "none";
@@ -47,6 +49,9 @@ var WsSignaller = /** @class */ (function () {
     return WsSignaller;
 }());
 var ws = new WsSignaller("nobody");
+function isASCII(str) {
+    return /^[\x00-\xFF]*$/.test(str);
+}
 function connectClick() {
     var nickname = nicknameInput.value;
     console.log(nickname);
@@ -59,12 +64,19 @@ function connectClick() {
     ws.connect();
 }
 function messageChanged() {
+    chatErrorLabel.innerHTML = null;
     var msg = messageInput.value;
     console.log(msg);
     if (msg == null || msg.length == 0 || msg.length > 100) {
-        // log out of range
+        chatErrorLabel.innerHTML = 'Please enter ASCII text between 0 and 100 characters';
         return;
     }
+    if (!isASCII(msg)) {
+        chatErrorLabel.innerHTML = 'Please enter ASCII text as unicode cannot be rendered on the Led Display';
+        return;
+    }
+    // reconnect if our browser has somehow disconnected (safari aka the new IExplorer)
+    ws.reconnect();
     ws.send(msg);
     messageInput.value = null;
 }
