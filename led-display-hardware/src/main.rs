@@ -26,7 +26,6 @@ mod network;
 
 #[derive(Debug)]
 enum LedDemoError {
-    Spi(SpiError),
     Display(LedPanelError),
     Network(NetworkError),
     Framer(FramerError<NetworkError>),
@@ -41,12 +40,6 @@ impl From<LedPanelError> for LedDemoError {
 impl From<FramerError<NetworkError>> for LedDemoError {
     fn from(err: FramerError<NetworkError>) -> LedDemoError {
         LedDemoError::Framer(err)
-    }
-}
-
-impl From<SpiError> for LedDemoError {
-    fn from(err: SpiError) -> LedDemoError {
-        LedDemoError::Spi(err)
     }
 }
 
@@ -80,9 +73,7 @@ fn main() -> ! {
     let mut afio = dp.AFIO.constrain(&mut rcc.apb2);
     let mut flash = dp.FLASH.constrain();
     let clocks = rcc.cfgr.freeze(&mut flash.acr);
-    let delay = Delay::new(cp.SYST, clocks);
-
-    let delay = RefCell::new(delay);
+    let mut delay = Delay::new(cp.SYST, clocks);
 
     // spi setup
     let mut gpioa = dp.GPIOA.split(&mut rcc.apb2);
@@ -105,7 +96,7 @@ fn main() -> ! {
     );
 
     // wait for things to settle
-    delay.borrow_mut().delay_ms(250_u16);
+    delay.delay_ms(250_u16);
     rprintln!("[INF] Done initialising");
 
     let spi = RefCell::new(spi);
@@ -114,7 +105,7 @@ fn main() -> ! {
     let mut led_panel = LedPanel::new(&mut max7219, &spi);
 
     loop {
-        let mut stream = TcpStream::new(&mut w5500, Socket::Socket0, &delay, &spi);
+        let mut stream = TcpStream::new(&mut w5500, Socket::Socket0, &mut delay, &spi);
 
         match client_connect(&mut led_panel, &mut stream) {
             Ok(()) => rprintln!("[INF] Connection closed"),
@@ -166,9 +157,6 @@ fn client_connect(led_panel: &mut LedPanel, stream: &mut TcpStream) -> Result<()
     // read one message at a time and display it
     while let Some(message) = framer.read_text(stream, &mut frame_buf)? {
         rprintln!("[INF] Websocket received: {}", message);
-
-        // NOTE: a delay causes the crash too when we receive more than one frame without going back to "Waiting for bytes"
-        // _delay.delay_ms(2000_u16);
 
         led_panel.scroll_str(message)?;
     }
