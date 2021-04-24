@@ -29,7 +29,7 @@ enum LedDemoError {
     Spi(SpiError),
     Display(LedPanelError),
     Network(NetworkError),
-    Framer(FramerError),
+    Framer(FramerError<NetworkError>),
 }
 
 impl From<LedPanelError> for LedDemoError {
@@ -38,8 +38,8 @@ impl From<LedPanelError> for LedDemoError {
     }
 }
 
-impl From<FramerError> for LedDemoError {
-    fn from(err: FramerError) -> LedDemoError {
+impl From<FramerError<NetworkError>> for LedDemoError {
+    fn from(err: FramerError<NetworkError>) -> LedDemoError {
         LedDemoError::Framer(err)
     }
 }

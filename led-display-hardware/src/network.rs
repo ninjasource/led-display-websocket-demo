@@ -2,7 +2,7 @@ use core::cell::RefCell;
 
 use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
 use embedded_hal::{blocking::spi::Transfer, digital::v2::OutputPin};
-use embedded_websocket::framer::{IoError, Read, Write};
+use embedded_websocket::framer::Stream;
 use shared_bus::{NullMutex, SpiProxy};
 use stm32f1xx_hal::{
     delay::Delay,
@@ -19,7 +19,7 @@ use crate::SpiError;
 
 #[derive(Debug)]
 pub enum NetworkError {
-    Io(stm32f1xx_hal::spi::Error),
+    Io(SpiError),
     Closed,
     SocketStatusNone,
 }
@@ -137,21 +137,17 @@ where
     }
 }
 
-impl<'a, CS, PinError, SPI> Read for TcpStream<'a, CS, SPI>
+impl<'a, CS, PinError, SPI> Stream<NetworkError> for TcpStream<'a, CS, SPI>
 where
     CS: OutputPin<Error = PinError>,
     SPI: Transfer<u8, Error = SpiError>,
 {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, IoError> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, NetworkError> {
         rprintln!("[INF] Read: Waiting for bytes");
 
         loop {
-            self.wait_for_is_connected().map_err(|_| IoError::Read)?;
-            match self
-                .w5500
-                .try_receive_tcp(self.connection.socket, buf)
-                .map_err(|_| IoError::Read)?
-            {
+            self.wait_for_is_connected()?;
+            match self.w5500.try_receive_tcp(self.connection.socket, buf)? {
                 Some(len) => {
                     rprintln!("[INF] Read: Received {} bytes", len);
                     return Ok(len);
@@ -162,23 +158,14 @@ where
             };
         }
     }
-}
 
-impl<'a, CS, PinError, SPI> Write for TcpStream<'a, CS, SPI>
-where
-    CS: OutputPin<Error = PinError>,
-    SPI: Transfer<u8, Error = SpiError>,
-{
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), IoError> {
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), NetworkError> {
         let mut start = 0;
         rprintln!("[INF] Write: Sending {} bytes", buf.len());
 
         loop {
-            self.wait_for_is_connected().map_err(|_| IoError::Read)?;
-            let bytes_sent = self
-                .w5500
-                .send_tcp(self.connection.socket, &buf[start..])
-                .map_err(|_| IoError::Write)?;
+            self.wait_for_is_connected()?;
+            let bytes_sent = self.w5500.send_tcp(self.connection.socket, &buf[start..])?;
             start += bytes_sent;
             rprintln!("[INF] Write: Sent {} bytes", bytes_sent);
 

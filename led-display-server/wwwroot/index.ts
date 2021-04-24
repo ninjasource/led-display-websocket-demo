@@ -44,7 +44,10 @@ class WsSignaller {
         if (this.wsConnection != null && this.wsConnection.readyState == WebSocket.CLOSED) {
             console.log("reconnecting ws");
             this.connect();
+            return true;
         }
+
+        return false;
     }
 
     public send(msg: string) {
@@ -57,6 +60,9 @@ class WsSignaller {
         let _wsConnection = e.currentTarget as WebSocket;
         console.log('ws connected');
         setSectionVisible(chatSection);
+
+        // we may have a message to send if this was a reconnect
+        messageChanged();
     }
 
     private onmessage(e: MessageEvent) {
@@ -86,10 +92,14 @@ function connectClick() {
 function messageChanged() {
     chatErrorLabel.innerHTML = null;
     let msg = messageInput.value;
+    if (msg == null || msg.length == 0) {
+        return;
+    }
+
     console.log(msg);
 
-    if (msg == null || msg.length == 0 || msg.length > 100) {
-        chatErrorLabel.innerHTML = 'Please enter ASCII text between 0 and 100 characters';
+    if (msg.length > 100) {
+        chatErrorLabel.innerHTML = 'Please enter ASCII text less than 100 characters';
         return;
     }
 
@@ -99,10 +109,11 @@ function messageChanged() {
     }
 
     // reconnect if our browser has somehow disconnected (safari aka the new IExplorer)
-    ws.reconnect();
-
-    ws.send(msg);
-    messageInput.value = null;
+    if (!ws.reconnect()) {
+        // if we are already connected then send the message now
+        ws.send(msg);
+        messageInput.value = null;
+    }
 }
 
 window.onfocus = () => {
