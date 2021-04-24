@@ -117,15 +117,17 @@ fn main() -> ! {
 fn client_connect(led_panel: &mut LedPanel, stream: &mut TcpStream) -> Result<(), LedDemoError> {
     rprintln!("[INF] Client connecting");
 
+    // remote connection
     let host_ip = IpAddress::new(51, 140, 68, 75);
     let host_port = 80;
     let host = "ninjametal.com";
     let origin = "http://ninjametal.com";
 
-    //let host_ip = IpAddress::new(192, 168, 1, 149);
-    //let host_port = 1337;
-    //let host = "192.168.1.149";
-    //let origin = "http://192.168.1.149";
+    // local connection
+    // let host_ip = IpAddress::new(192, 168, 1, 149);
+    // let host_port = 1337;
+    // let host = "192.168.1.149";
+    // let origin = "http://192.168.1.149";
 
     // open tcp stream
     stream.connect(&host_ip, host_port)?;
@@ -157,7 +159,6 @@ fn client_connect(led_panel: &mut LedPanel, stream: &mut TcpStream) -> Result<()
     // read one message at a time and display it
     while let Some(message) = framer.read_text(stream, &mut frame_buf)? {
         rprintln!("[INF] Websocket received: {}", message);
-
         led_panel.scroll_str(message)?;
     }
 

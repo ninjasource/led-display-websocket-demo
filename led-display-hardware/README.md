@@ -1,5 +1,5 @@
 # Introduction
-This demo uses a STM32 Bluepill connected to a W5500 ethernet card and a set of 20 daisey chained MAX7219 boards for use as an LED Display. On startup the application opens a TCP connection to a server over port 80 followed by a websocket opening handshake. It then captures text messages from the websocket connection and scrolls them on the LED Display.
+This demo uses a STM32 Bluepill connected to a W5500 ethernet card and a set of 20 daisy chained MAX7219 boards for use as an LED Display. On startup the application opens a TCP connection to a server over port 80 followed by a websocket opening handshake. It then captures text messages from the websocket connection and scrolls them on the LED Display. The W5500 card has its own internal buffers so we don't have to worry about not being able to read bytes off the network stream immediately.
 
 # Setup
 
