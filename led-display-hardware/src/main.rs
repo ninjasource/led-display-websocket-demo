@@ -9,12 +9,18 @@ use core::cell::RefCell;
 use cortex_m::asm;
 use cortex_m_rt::entry;
 use display::{LedPanel, LedPanelError};
-use embedded_hal::{spi::Mode, spi::Phase, spi::Polarity};
+use embedded_hal::{blocking::spi::Transfer, spi::Mode, spi::Phase, spi::Polarity};
 use embedded_websocket as ws;
 use max7219_dot_matrix::MAX7219;
-use network::{EthernetCard, NetworkError, TcpStream};
+use network::{NetworkError, TcpStream};
 use rtt_target::{rprintln, rtt_init_print};
-use stm32f1xx_hal::{delay::Delay, prelude::*, spi::Spi, stm32};
+use stm32f1xx_hal::{
+    delay::Delay,
+    gpio::{gpioa::PA2, Output, PushPull},
+    prelude::*,
+    spi::Spi,
+    stm32,
+};
 use w5500::{IpAddress, Socket, W5500};
 use ws::{
     framer::{Framer, FramerError},
@@ -56,7 +62,10 @@ impl From<NetworkError> for LedDemoError {
     }
 }
 
+// W5500 ethernet card with CS pin PA2, and the other pins specified too.
+type W5500Physical = W5500<PA2<Output<PushPull>>>;
 type SpiError = stm32f1xx_hal::spi::Error;
+type SpiTransfer = dyn Transfer<u8, Error = SpiError>;
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -89,7 +98,7 @@ fn main() -> ! {
     let miso = gpioa.pa6;
     let mosi = gpioa.pa7.into_alternate_push_pull(&mut gpioa.crl);
     let mut cs_max7219 = gpioa.pa4.into_push_pull_output(&mut gpioa.crl);
-    let mut cs_ethernet = gpioa.pa2.into_push_pull_output(&mut gpioa.crl);
+    let cs_ethernet = gpioa.pa2.into_push_pull_output(&mut gpioa.crl);
     let spi = Spi::spi1(
         dp.SPI1,
         (sck, miso, mosi),
@@ -107,37 +116,22 @@ fn main() -> ! {
     delay.borrow_mut().delay_ms(250_u16);
     rprintln!("[INF] Done initialising");
 
-    // used to share the spi bus
-    let bus = shared_bus::BusManagerSimple::new(spi);
+    let spi = RefCell::new(spi);
+    let mut w5500 = W5500::new(cs_ethernet);
+    let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
+    let mut led_panel = LedPanel::new(&mut max7219, &spi);
 
     loop {
-        // setup led panel
-        let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
-        let mut led_spi = bus.acquire_spi();
-        let mut led_panel = match LedPanel::new(&mut max7219, &mut led_spi) {
-            Ok(x) => x,
-            Err(error) => {
-                rprintln!("[ERR] LedPanel: {:?}", &error);
-                continue;
-            }
-        };
+        let mut stream = TcpStream::new(&mut w5500, Socket::Socket0, &delay, &spi);
 
-        // setup ethernet card
-        let ethernet_spi = &mut bus.acquire_spi();
-        let mut w5500 = W5500::new(&mut cs_ethernet, ethernet_spi);
-
-        match client_connect(&mut led_panel, &mut w5500, &delay) {
+        match client_connect(&mut led_panel, &mut stream) {
             Ok(()) => rprintln!("[INF] Connection closed"),
             Err(error) => rprintln!("[ERR] {:?}", &error),
         }
     }
 }
 
-fn client_connect<'a>(
-    led_panel: &mut LedPanel,
-    w5500: &'a mut EthernetCard<'a>,
-    delay: &'a RefCell<Delay>,
-) -> Result<(), LedDemoError> {
+fn client_connect(led_panel: &mut LedPanel, stream: &mut TcpStream) -> Result<(), LedDemoError> {
     rprintln!("[INF] Client connecting");
 
     let host_ip = IpAddress::new(51, 140, 68, 75);
@@ -150,7 +144,7 @@ fn client_connect<'a>(
     //let host = "192.168.1.149";
     //let origin = "http://192.168.1.149";
 
-    let mut stream = TcpStream::new(w5500, Socket::Socket0, delay);
+    // open tcp stream
     stream.connect(&host_ip, host_port)?;
 
     let mut websocket = ws::WebSocketClient::new_client(EmptyRng::new());
@@ -173,11 +167,12 @@ fn client_connect<'a>(
         additional_headers: None,
     };
 
-    framer.connect(&mut stream, &websocket_options)?;
+    // send websocket open handshake
+    framer.connect(stream, &websocket_options)?;
     rprintln!("[INF] Websocket opening handshake complete");
 
     // read one message at a time and display it
-    while let Some(message) = framer.read_text(&mut stream, &mut frame_buf)? {
+    while let Some(message) = framer.read_text(stream, &mut frame_buf)? {
         rprintln!("[INF] Websocket received: {}", message);
 
         // NOTE: a delay causes the crash too when we receive more than one frame without going back to "Waiting for bytes"
