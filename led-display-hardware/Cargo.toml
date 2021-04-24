@@ -1,6 +1,6 @@
 [package]
 name = "led-display-hardware"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["David Haig <david@ninjasource.com>"]
 edition = "2018"
 

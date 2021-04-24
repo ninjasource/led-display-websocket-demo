@@ -1,6 +1,5 @@
-use core::cell::RefCell;
-
 use crate::{SpiError, SpiTransfer};
+use core::{cell::RefCell, convert::Infallible};
 use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
 use embedded_websocket::framer::Stream;
 use stm32f1xx_hal::{
@@ -11,13 +10,13 @@ use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
 
 #[derive(Debug)]
 pub enum NetworkError {
-    Io(SpiError),
+    Io(W5500Error),
     Closed,
     SocketStatusNone,
 }
 
-impl From<SpiError> for NetworkError {
-    fn from(err: SpiError) -> NetworkError {
+impl From<W5500Error> for NetworkError {
+    fn from(err: W5500Error) -> NetworkError {
         NetworkError::Io(err)
     }
 }
@@ -36,8 +35,11 @@ impl Connection {
     }
 }
 
-// W5500 ethernet card with CS pin PA2, and the other pins specified too.
+// W5500 ethernet card with CS pin PA2
 type W5500Physical = W5500<PA2<Output<PushPull>>>;
+
+// the CS output pin on stm32f1xx_hal is Infallible
+type W5500Error = w5500::Error<SpiError, Infallible>;
 
 pub struct TcpStream<'a> {
     w5500: &'a mut W5500Physical,
@@ -76,8 +78,8 @@ impl<'a> TcpStream<'a> {
         w5500.set_protocol(spi, self.connection.socket, w5500::Protocol::TCP)?;
         w5500.dissconnect(spi, self.connection.socket)?;
         w5500.open_tcp(spi, self.connection.socket)?;
-
         w5500.connect(spi, Socket::Socket0, host_ip, host_port)?;
+
         wait_for_is_connected(w5500, spi, &mut self.connection, &mut self.delay)?;
         rprintln!("[INF] Client connected");
         Ok(())
