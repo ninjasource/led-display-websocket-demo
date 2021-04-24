@@ -1,10 +1,13 @@
 use core::cell::RefCell;
 
-use crate::{SpiError, SpiTransfer, W5500Physical};
+use crate::{SpiError, SpiTransfer};
 use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
 use embedded_websocket::framer::{IoError, Read, Write};
-use stm32f1xx_hal::delay::Delay;
-use w5500::{IpAddress, MacAddress, Socket, SocketStatus};
+use stm32f1xx_hal::{
+    delay::Delay,
+    gpio::{gpioa::PA2, Output, PushPull},
+};
+use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
 
 #[derive(Debug)]
 pub enum NetworkError {
@@ -32,6 +35,9 @@ impl Connection {
         }
     }
 }
+
+// W5500 ethernet card with CS pin PA2, and the other pins specified too.
+type W5500Physical = W5500<PA2<Output<PushPull>>>;
 
 pub struct TcpStream<'a> {
     w5500: &'a mut W5500Physical,

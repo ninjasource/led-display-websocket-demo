@@ -14,13 +14,7 @@ use embedded_websocket as ws;
 use max7219_dot_matrix::MAX7219;
 use network::{NetworkError, TcpStream};
 use rtt_target::{rprintln, rtt_init_print};
-use stm32f1xx_hal::{
-    delay::Delay,
-    gpio::{gpioa::PA2, Output, PushPull},
-    prelude::*,
-    spi::Spi,
-    stm32,
-};
+use stm32f1xx_hal::{delay::Delay, prelude::*, spi::Spi, stm32};
 use w5500::{IpAddress, Socket, W5500};
 use ws::{
     framer::{Framer, FramerError},
@@ -62,8 +56,6 @@ impl From<NetworkError> for LedDemoError {
     }
 }
 
-// W5500 ethernet card with CS pin PA2, and the other pins specified too.
-type W5500Physical = W5500<PA2<Output<PushPull>>>;
 type SpiError = stm32f1xx_hal::spi::Error;
 type SpiTransfer = dyn Transfer<u8, Error = SpiError>;
 
