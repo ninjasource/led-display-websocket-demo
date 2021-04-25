@@ -14,7 +14,6 @@ embedded-hal = "0.2.4"
 embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket", default-features = false }
 max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix" }
 w5500 = { git = "https://github.com/ninjasource/w5500" }
-shared-bus = "0.2.0"
 stm32f1xx-hal = { version = "0.7", features = ["stm32f103", "rt"] }
 rtt-target = { version = "0.3.0", features = ["cortex-m"] } # this is for logging
 
