@@ -23,4 +23,9 @@ debug = true
 
 # this makes the binary small enough to fit on the device while still being able to build and upload in debug mode
 [profile.dev]
-opt-level = 's'
+codegen-units = 1
+debug = 2
+debug-assertions = true # <-
+incremental = false
+opt-level = 3 # <-
+overflow-checks = true # <-

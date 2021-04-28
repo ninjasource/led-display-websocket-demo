@@ -9,12 +9,12 @@ build = "build.rs" # the special build script for linking the bearssl library
 cortex-m-rt = "0.6.13"
 cortex-m = "0.7.2"
 embedded-hal = "0.2.4"
-#embedded-websocket = { path = "../../embedded-websocket" }
+embedded-websocket = { path = "../../embedded-websocket", default-features = false }
 #max7219-dot-matrix = { path = "../../max7219-dot-matrix" }
-#w5500 = { path = "../../w5500" }
-embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket", default-features = false }
+w5500 = { path = "../../w5500" }
+#embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket", default-features = false }
 max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix" }
-w5500 = { git = "https://github.com/ninjasource/w5500" }
+#w5500 = { git = "https://github.com/ninjasource/w5500" }
 cty = "0.2"
 stm32f1xx-hal = { version = "0.7", features = ["stm32f103", "rt"] }
 rtt-target = { version = "0.3.0", features = ["cortex-m"] } # this is for logging
@@ -29,4 +29,9 @@ codegen-units = 1
 
 # this makes the binary small enough to fit on the device while still being able to build and upload in debug mode
 [profile.dev]
-opt-level = 's'
+codegen-units = 1
+debug = 2
+debug-assertions = true # <-
+incremental = false
+opt-level = 3 # <-
+overflow-checks = true # <-

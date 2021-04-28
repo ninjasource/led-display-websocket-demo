@@ -6,14 +6,15 @@
 #[macro_use]
 extern crate rtt_target;
 
-#[macro_use]
-extern crate lazy_static;
+//#[macro_use]
+//extern crate lazy_static;
 
 mod bearssl;
 use bearssl::*;
 
-use core::{fmt::Arguments, mem::MaybeUninit};
-use cty::size_t;
+use crate::bearssl::*;
+use core::{fmt::Arguments, mem::MaybeUninit, pin::Pin};
+use cty::{c_void, size_t};
 
 use core::cell::RefCell;
 use cortex_m::asm;
@@ -22,10 +23,20 @@ use display::{LedPanel, LedPanelError};
 use embedded_hal::{blocking::spi::Transfer, spi::Mode, spi::Phase, spi::Polarity};
 use embedded_websocket as ws;
 use max7219_dot_matrix::MAX7219;
-use network::{NetworkError, TcpStream};
+use network::{wait_for_is_connected, Connection, EthContext, NetworkError, Ssl, SslStream};
 use rtt_target::{rprintln, rtt_init_print};
-use stm32f1xx_hal::{delay::Delay, prelude::*, spi::Spi, stm32};
-use w5500::{IpAddress, Socket, W5500};
+use stm32f1xx_hal::{
+    delay::Delay,
+    gpio::{
+        gpioa::{PA2, PA4, PA5, PA6, PA7},
+        Alternate, Floating, Input, Output, PushPull,
+    },
+    pac::SPI1,
+    prelude::*,
+    spi::{Spi, Spi1NoRemap},
+    stm32,
+};
+use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
 use ws::{
     framer::{Framer, FramerError, Stream},
     EmptyRng, WebSocketOptions,
@@ -39,7 +50,6 @@ enum LedDemoError {
     Display(LedPanelError),
     Network(NetworkError),
     Framer(FramerError<NetworkError>),
-    Ssl(FramerError<SslError>),
 }
 
 impl From<LedPanelError> for LedDemoError {
@@ -60,14 +70,18 @@ impl From<NetworkError> for LedDemoError {
     }
 }
 
-impl From<FramerError<SslError>> for LedDemoError {
-    fn from(err: FramerError<SslError>) -> LedDemoError {
-        LedDemoError::Ssl(err)
-    }
-}
-
 type SpiError = stm32f1xx_hal::spi::Error;
 type SpiTransfer = dyn Transfer<u8, Error = SpiError>;
+type SpiPhysical = Spi<
+    SPI1,
+    Spi1NoRemap,
+    (
+        PA5<Alternate<PushPull>>,
+        PA6<Input<Floating>>,
+        PA7<Alternate<PushPull>>,
+    ),
+    u8,
+>;
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -75,77 +89,6 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     loop {
         asm::bkpt() // halt = exit probe-run
     }
-}
-
-// ************ SSL Related ********************
-
-#[derive(Debug)]
-enum SslError {
-    WriteBrErr(i32),
-    ReadBrErr(i32),
-}
-
-struct Ssl {
-    cc: br_ssl_client_context,
-    ioc: br_sslio_context,
-}
-
-// no mangle so that the linker can find this function
-// which will be called from BearSSL
-#[no_mangle]
-extern "C" fn time(_time: &bearssl::__time_t) -> bearssl::__time_t {
-    1591000000
-}
-
-// no mangle so that the linker can find this function
-// which will be called from BearSSL
-#[no_mangle]
-extern "C" fn strlen(s: &str) -> usize {
-    s.len()
-}
-
-unsafe extern "C" fn sock_read(
-    read_context: *mut cty::c_void,
-    data: *mut cty::c_uchar,
-    len: size_t,
-) -> cty::c_int {
-    let stream: &mut TcpStream = &mut *(read_context as *mut TcpStream);
-    let buf: &mut [u8] = core::slice::from_raw_parts_mut(data, len as usize);
-
-    let max_len = if buf.len() > len as usize {
-        len as usize
-    } else {
-        buf.len()
-    };
-
-    // TODO: figure out what to do if this panics
-    let size = stream.read(&mut buf[..max_len]).unwrap();
-    //let size = 0;
-    rprintln!("[DBG] sock_read received {} bytes", size);
-    return size as cty::c_int;
-}
-
-unsafe extern "C" fn sock_write(
-    write_context: *mut cty::c_void,
-    data: *const cty::c_uchar,
-    len: size_t,
-) -> cty::c_int {
-    //    loop {
-    //        asm::nop()
-    //    }
-    let stream: &mut TcpStream = &mut *(write_context as *mut TcpStream);
-
-    rprintln!("[DBG] sock_write attempting to write {} bytes", len);
-    let buf: &[u8] = core::slice::from_raw_parts(data, len as usize);
-    stream.write_all(buf).unwrap();
-
-    rprintln!("[DBG] sock_write wrote {} bytes", len);
-    len as cty::c_int
-}
-
-struct EthContext {
-    w5500: *mut cty::c_void,
-    spi: *mut cty::c_void,
 }
 
 static mut TA0_DN: [u8; 65] = [
@@ -178,6 +121,7 @@ static mut RSA_N: [u8; 256] = [
 
 static mut RSA_E: [u8; 3] = [0x01, 0x00, 0x01];
 static mut IO_BUF: [u8; 4096] = [0; 4096];
+//static mut IO_BUF: [u8; 2048] = [0; 2048];
 
 // NOTE: we want to get real entropy somehow - The entropy below is hardcoded
 static ENTROPY: [u8; 64] = [
@@ -215,82 +159,142 @@ fn build_trust_anchor() -> br_x509_trust_anchor {
     ta
 }
 
-struct SslStream<'a> {
-    stream: &'a mut TcpStream<'a>,
-    ssl: Ssl,
+// no mangle so that the linker can find this function
+// which will be called from BearSSL
+#[no_mangle]
+extern "C" fn time(_time: &crate::bearssl::__time_t) -> crate::bearssl::__time_t {
+    1619612137
 }
 
-impl<'a> Stream<SslError> for SslStream<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, SslError> {
-        rprintln!("[INF] br_sslio_read");
-        // panic!("read ssl");
-
-        let rlen = unsafe {
-            br_sslio_read(
-                &mut self.ssl.ioc as *mut _,
-                buf as *mut _ as *mut cty::c_void,
-                buf.len(),
-            )
-        };
-
-        if rlen < 0 {
-            rprintln!("[ERR] br_sslio_read failed to read: {}", rlen);
-            return Err(SslError::ReadBrErr(self.ssl.cc.eng.err));
-        }
-
-        Ok(rlen as usize)
-    }
-
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), SslError> {
-        rprintln!("[INF] br_sslio_write_all: {} bytes", buf.len());
-        let success = unsafe {
-            br_sslio_write_all(
-                &mut self.ssl.ioc as *mut _,
-                buf.as_ptr() as *const _,
-                buf.len(),
-            )
-        };
-
-        // panic!("write ssl");
-
-        if success < 0 {
-            rprintln!("[ERR] br_sslio_write_all failed");
-            return Err(SslError::WriteBrErr(self.ssl.cc.eng.err));
-        }
-
-        rprintln!("[INF] br_sslio_flush");
-        unsafe { br_sslio_flush(&mut self.ssl.ioc as *mut _) };
-        Ok(())
-    }
+// no mangle so that the linker can find this function
+// which will be called from BearSSL
+#[no_mangle]
+extern "C" fn strlen(s: &str) -> usize {
+    s.len()
 }
 
-// ************ End of SSL Related ********************
+unsafe extern "C" fn sock_read(
+    read_context: *mut cty::c_void,
+    data: *mut cty::c_uchar,
+    len: size_t,
+) -> cty::c_int {
+    rprintln!("[DBG] sock_read");
+
+    let context: &mut EthContext = &mut *(read_context as *mut EthContext);
+    let spi = &mut *(context.spi as *mut SpiPhysical);
+    let w5500 = &mut *(context.w5500 as *mut W5500<_>);
+    let connection = &mut *(context.connection as *mut Connection);
+
+    let buf: &mut [u8] = core::slice::from_raw_parts_mut(data, len as usize);
+
+    loop {
+        wait_for_is_connected(w5500, spi, connection).unwrap();
+        match w5500.try_receive_tcp(spi, connection.socket, buf).unwrap() {
+            Some(len) => {
+                rprintln!("[DBG] sock_read received {} bytes", len);
+                return len as cty::c_int;
+            }
+            None => {
+                //  delay.delay_ms(10_u16);
+            }
+        };
+    }
+
+    let max_len = if buf.len() > len as usize {
+        len as usize
+    } else {
+        buf.len()
+    };
+
+    // TODO: figure out what to do if this panics
+    //   let size = stream.read(&mut buf[..max_len]).unwrap();
+}
+
+unsafe extern "C" fn sock_write(
+    write_context: *mut cty::c_void,
+    data: *const cty::c_uchar,
+    len: size_t,
+) -> cty::c_int {
+    rprintln!("[DBG] sock_write {} bytes", len);
+
+    rprintln!("[DBG] sock_write attempting to write {} bytes", len);
+    let buf: &[u8] = core::slice::from_raw_parts(data, len as usize);
+
+    let mut start = 0;
+    rprintln!("[INF] Write: Sending {} bytes", buf.len());
+    let context: &mut EthContext = &mut *(write_context as *mut EthContext);
+    let spi = &mut *(context.spi as *mut SpiPhysical);
+    let w5500 = &mut *(context.w5500 as *mut W5500<_>);
+    let connection = &mut *(context.connection as *mut Connection);
+
+    loop {
+        wait_for_is_connected(w5500, spi, connection).unwrap();
+        let bytes_sent = w5500
+            .send_tcp(spi, connection.socket, &buf[start..])
+            .unwrap();
+        start += bytes_sent;
+        rprintln!("[INF] Write: Sent {} bytes", bytes_sent);
+
+        if start == buf.len() {
+            return len as cty::c_int;
+        }
+    }
+
+    rprintln!("[DBG] sock_write wrote {} bytes", len);
+    len as cty::c_int
+}
 
 /*
 lazy_static! {
-    static ref DELAY: Arc<RefCell<Delay>> = {
+    static ref PERIPHERALS: Physical = {
+        // general peripheral setup
         let cp: cortex_m::Peripherals = cortex_m::Peripherals::take().unwrap();
         let dp = stm32::Peripherals::take().unwrap();
+
         let mut rcc = dp.RCC.constrain();
         let mut afio = dp.AFIO.constrain(&mut rcc.apb2);
         let mut flash = dp.FLASH.constrain();
         let clocks = rcc.cfgr.freeze(&mut flash.acr);
         let mut delay = Delay::new(cp.SYST, clocks);
-        RefCell::new(delay)
+
+        // spi setup
+        let mut gpioa = dp.GPIOA.split(&mut rcc.apb2);
+        let sck = gpioa.pa5.into_alternate_push_pull(&mut gpioa.crl);
+        let miso = gpioa.pa6;
+        let mosi = gpioa.pa7.into_alternate_push_pull(&mut gpioa.crl);
+        let mut cs_max7219 = gpioa.pa4.into_push_pull_output(&mut gpioa.crl);
+        let cs_ethernet = gpioa.pa2.into_push_pull_output(&mut gpioa.crl);
+        let spi = Spi::spi1(
+            dp.SPI1,
+            (sck, miso, mosi),
+            &mut afio.mapr,
+            Mode {
+                polarity: Polarity::IdleLow,
+                phase: Phase::CaptureOnFirstTransition,
+            },
+            2.mhz(), // up to 10mhz for max7219 module, 2mhz is max for bluepill
+            clocks,
+            &mut rcc.apb2,
+        );
+
+        Physical { delay, spi, cs_max7219, cs_ethernet }
     };
 }
 */
-
-fn DelayMs(ms: u16) {
-    let cp: cortex_m::Peripherals = cortex_m::Peripherals::take().unwrap();
-    let dp = stm32::Peripherals::take().unwrap();
-    let mut rcc = dp.RCC.constrain();
-    let mut afio = dp.AFIO.constrain(&mut rcc.apb2);
-    let mut flash = dp.FLASH.constrain();
-    let clocks = rcc.cfgr.freeze(&mut flash.acr);
-    let mut delay = Delay::new(cp.SYST, clocks);
-    delay.delay_ms(ms)
+/*
+extern "C" {
+    static mut DEV: *mut c_void;
 }
+
+pub struct Dev {
+    pub delay: Delay,
+    pub spi: SpiPhysical,
+}*/
+
+/*
+extern "C" {
+    pub fn br_ssl_engine_last_error(cc: *const br_ssl_engine_context) -> cty::c_uint;
+}*/
 
 #[entry]
 fn main() -> ! {
@@ -307,8 +311,6 @@ fn main() -> ! {
     let clocks = rcc.cfgr.freeze(&mut flash.acr);
     let mut delay = Delay::new(cp.SYST, clocks);
 
-    // DELAY.replace(Some(delay));
-
     // spi setup
     let mut gpioa = dp.GPIOA.split(&mut rcc.apb2);
     let sck = gpioa.pa5.into_alternate_push_pull(&mut gpioa.crl);
@@ -316,7 +318,7 @@ fn main() -> ! {
     let mosi = gpioa.pa7.into_alternate_push_pull(&mut gpioa.crl);
     let mut cs_max7219 = gpioa.pa4.into_push_pull_output(&mut gpioa.crl);
     let cs_ethernet = gpioa.pa2.into_push_pull_output(&mut gpioa.crl);
-    let spi = Spi::spi1(
+    let mut spi = Spi::spi1(
         dp.SPI1,
         (sck, miso, mosi),
         &mut afio.mapr,
@@ -329,52 +331,21 @@ fn main() -> ! {
         &mut rcc.apb2,
     );
 
+    //  let mut dev = Dev { delay, spi };
+
+    //  unsafe { DEV = &mut dev as *mut _ as *mut cty::c_void };
+
     // wait for things to settle
     delay.delay_ms(250_u16);
-    rprintln!("[INF] Done initialising");
-    // DelayMs(1000);
 
-    let spi = RefCell::new(spi);
+    rprintln!("[INF] Done initialising");
+
+    //let spi = RefCell::new(spi);
     let mut w5500 = W5500::new(cs_ethernet);
     let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
-    let mut led_panel = LedPanel::new(&mut max7219, &spi);
+    //let mut led_panel = LedPanel::new(&mut max7219, &spi);
 
-    loop {
-        let mut stream = TcpStream::new(&mut w5500, Socket::Socket0, &mut delay, &spi);
-
-        match client_connect(&mut led_panel, &mut stream) {
-            Ok(()) => rprintln!("[INF] Connection closed"),
-            Err(error) => rprintln!("[ERR] {:?}", &error),
-        }
-    }
-}
-
-fn client_connect<'a>(
-    led_panel: &mut LedPanel,
-    stream: &'a mut TcpStream<'a>,
-) -> Result<(), LedDemoError> {
-    rprintln!("[INF] Client connecting");
-
-    // remote connection
-    // let host_ip = IpAddress::new(51, 140, 68, 75);
-    // let host_port = 80;
-    // let host = "ninjametal.com";
-    // let origin = "http://ninjametal.com";
-
-    // remote connection ssl
-    let host_ip = IpAddress::new(51, 140, 68, 75);
-    let host_port = 443;
-    let host = "ninjametal.com";
-    let origin = "https://ninjametal.com";
-
-    // local connection
-    // let host_ip = IpAddress::new(192, 168, 1, 149);
-    // let host_port = 1337;
-    // let host = "192.168.1.149";
-    // let origin = "http://192.168.1.149";
-
-    // open tcp stream
-    stream.connect(&host_ip, host_port)?;
+    let mut connection = Connection::new(Socket::Socket0);
 
     // ************************************* SSL INIT **************************************************
     // NOTE: I had trouble putting this INIT functionality into its own function because of all the pointers flying around.
@@ -391,7 +362,6 @@ fn client_connect<'a>(
     let mut x509 = MaybeUninit::<br_x509_minimal_context>::uninit();
     let mut ioc = MaybeUninit::<br_sslio_context>::uninit();
 
-    rprintln!("[INF] br_ssl_client_init_full");
     unsafe {
         br_ssl_client_init_full(
             cc.as_mut_ptr(),
@@ -400,9 +370,8 @@ fn client_connect<'a>(
             trust_anchors.len(),
         )
     };
-
     let mut cc = unsafe { cc.assume_init() };
-    rprintln!("[INF] br_ssl_engine_set_buffer");
+    rprintln!("[INF] br_ssl_client_init_full: Err: {}", cc.eng.err);
 
     unsafe {
         br_ssl_engine_inject_entropy(
@@ -411,6 +380,7 @@ fn client_connect<'a>(
             ENTROPY.len(),
         )
     };
+    rprintln!("[INF] br_ssl_engine_inject_entropy: Err: {}", cc.eng.err);
 
     unsafe {
         br_ssl_engine_set_buffer(
@@ -420,9 +390,7 @@ fn client_connect<'a>(
             0, // half duplex
         )
     };
-
-    let context_ptr = stream as *mut _ as *mut cty::c_void;
-    rprintln!("[INF] br_ssl_client_reset");
+    rprintln!("[INF] br_ssl_engine_set_buffer: Err: {}", cc.eng.err);
 
     unsafe {
         br_ssl_client_reset(
@@ -431,8 +399,17 @@ fn client_connect<'a>(
             0,
         )
     };
+    rprintln!("[INF] br_ssl_client_reset: Err: {}", cc.eng.err);
 
-    rprintln!("[INF] br_sslio_init");
+    let mut context = EthContext {
+        w5500: &mut w5500 as *mut _ as *mut cty::c_void,
+        connection: &mut connection as *mut _ as *mut cty::c_void,
+        spi: &mut spi as *mut _ as *mut cty::c_void,
+        delay: &mut delay as *mut _ as *mut cty::c_void,
+    };
+
+    let context_ptr = &mut context as *mut _ as *mut cty::c_void;
+
     unsafe {
         br_sslio_init(
             ioc.as_mut_ptr(),
@@ -444,17 +421,99 @@ fn client_connect<'a>(
         )
     };
 
-    let ioc = unsafe { ioc.assume_init() };
-    let mut ssl = Ssl { cc, ioc };
-    let mut ssl_stream = SslStream { stream, ssl };
+    rprintln!("[INF] br_sslio_init: Err: {}", cc.eng.err);
+    let mut ioc = unsafe { ioc.assume_init() };
 
     // ********************************** END OF SSL INIT **********************************************
+
+    //  let mut stream = SslStream::new(&mut w5500, connection, &mut delay, &spi, ssl, context);
+
+    /*
+            match client_connect(&mut led_panel, &mut stream) {
+                Ok(()) => rprintln!("[INF] Connection closed"),
+                Err(error) => rprintln!("[ERR] {:?}", &error),
+            }
+    */
+    rprintln!("[INF] Client connecting");
+
+    // remote connection
+    //let host_ip = IpAddress::new(51, 140, 68, 75);
+    //let host_port = 80;
+    //let host = "ninjametal.com";
+    //let origin = "http://ninjametal.com";
+
+    // remote connection ssl
+    let host_ip = IpAddress::new(51, 140, 68, 75);
+    let host_port = 443;
+    let host = "ninjametal.com";
+    let origin = "https://ninjametal.com";
+
+    // local connection
+    // let host_ip = IpAddress::new(192, 168, 1, 149);
+    // let host_port = 1337;
+    // let host = "192.168.1.149";
+    // let origin = "http://192.168.1.149";
+
+    // open tcp stream
+
+    //     let spi1 = &mut *spi.borrow_mut();
+
+    w5500
+        .set_mode(&mut spi, false, false, false, false)
+        .unwrap();
+    w5500
+        .set_mac(
+            &mut spi,
+            &MacAddress::new(0x02, 0x01, 0x02, 0x03, 0x04, 0x05),
+        )
+        .unwrap();
+    w5500
+        .set_subnet(&mut spi, &IpAddress::new(255, 255, 255, 0))
+        .unwrap();
+    w5500
+        .set_ip(&mut spi, &IpAddress::new(192, 168, 1, 33))
+        .unwrap();
+    w5500
+        .set_gateway(&mut spi, &IpAddress::new(192, 168, 1, 1))
+        .unwrap();
+    w5500
+        .set_protocol(&mut spi, connection.socket, w5500::Protocol::TCP)
+        .unwrap();
+    w5500.dissconnect(&mut spi, connection.socket).unwrap();
+    w5500.open_tcp(&mut spi, connection.socket).unwrap();
+    w5500
+        .connect(&mut spi, connection.socket, &host_ip, host_port)
+        .unwrap();
+
+    wait_for_is_connected(&mut w5500, &mut spi, &mut connection).unwrap();
+    /*
+        let buf: [u8; 10] = [0; 10];
+        let success =
+            unsafe { br_sslio_write_all(&mut ioc as *mut _, buf.as_ptr() as *const _, buf.len()) };
+        rprintln!("[INF] Success {}", success);
+
+        unsafe { br_sslio_flush(&mut ioc as *mut _) };
+        loop {
+            rprintln!("echo");
+            delay.delay_ms(1000_u16);
+        }
+    */
+    let mut ssl = Ssl {
+        cc: &mut cc as *mut _,
+        ioc: &mut ioc as *mut _,
+    };
+
+    let mut stream = SslStream::new(&mut w5500, connection, &mut spi, ssl);
+
+    //   stream.connect(&host_ip, host_port).unwrap();
+
+    // let mut ssl_stream = SslStream { stream, ssl };
 
     let mut websocket = ws::WebSocketClient::new_client(EmptyRng::new());
     let mut read_buf = [0; 256];
     let mut read_cursor = 0;
     let mut write_buf = [0; 256];
-    let mut frame_buf = [0; 256];
+    //let mut frame_buf = [0; 64];
     let mut framer = Framer::new(
         &mut read_buf,
         &mut read_cursor,
@@ -470,15 +529,107 @@ fn client_connect<'a>(
         additional_headers: None,
     };
 
-    // send websocket open handshake
-    framer.connect(&mut ssl_stream, &websocket_options)?;
-    rprintln!("[INF] Websocket opening handshake complete");
+    rprintln!("[INF] Websocket sending opening handshake");
+    delay.delay_ms(1000_u16);
 
-    // read one message at a time and display it
-    while let Some(message) = framer.read_text(&mut ssl_stream, &mut frame_buf)? {
-        rprintln!("[INF] Websocket received: {}", message);
-        led_panel.scroll_str(message)?;
+    // send websocket open handshake
+    match framer.connect(&mut stream, &websocket_options) {
+        Ok(x) => {}
+        Err(x) => {
+            rprintln!("BearSSL Engine State: {}", cc.eng.err)
+        }
     }
 
+    loop {
+        rprintln!("echo");
+        delay.delay_ms(1000_u16);
+    }
+
+    rprintln!("[INF] Websocket opening handshake complete");
+
+    /*
+        // read one message at a time and display it
+        while let Some(message) = framer.read_text(stream, &mut frame_buf)? {
+            rprintln!("[INF] Websocket received: {}", message);
+            led_panel.scroll_str(message)?;
+        }
+    */
+
+    //  delay.delay_ms(1000_u16);
+
+    loop {}
+}
+
+static mut READ_BUF: [u8; 1024] = [0; 1024];
+static mut WRITE_BUF: [u8; 1024] = [0; 1024];
+static mut FRAME_BUF: [u8; 32] = [0; 32];
+//static mut SPI: SpiPhysical = <expr>;
+
+fn client_connect<'a>(
+    led_panel: &mut LedPanel,
+    stream: &mut SslStream<'a>,
+) -> Result<(), LedDemoError> {
+    rprintln!("[INF] Client connecting");
+
+    loop {
+        rprintln!("echo");
+        stream.delay_ms(1000_u16);
+    }
+
+    let mut websocket = ws::WebSocketClient::new_client(EmptyRng::new());
+    //let mut read_buf = [0; 256];
+    let mut read_cursor = 0;
+    //  let mut write_buf = [0; 256];
+    //let mut frame_buf = [0; 64];
+    let mut framer = Framer::new(
+        unsafe { &mut READ_BUF },
+        &mut read_cursor,
+        unsafe { &mut WRITE_BUF },
+        &mut websocket,
+    );
+
+    // remote connection
+    //let host_ip = IpAddress::new(51, 140, 68, 75);
+    //let host_port = 80;
+    //let host = "ninjametal.com";
+    //let origin = "http://ninjametal.com";
+
+    // remote connection ssl
+    let host_ip = IpAddress::new(51, 140, 68, 75);
+    let host_port = 443;
+    let host = "ninjametal.com";
+    let origin = "https://ninjametal.com";
+
+    // local connection
+    // let host_ip = IpAddress::new(192, 168, 1, 149);
+    // let host_port = 1337;
+    // let host = "192.168.1.149";
+    // let origin = "http://192.168.1.149";
+
+    // open tcp stream
+    stream.connect(&host_ip, host_port)?;
+
+    // let mut ssl_stream = SslStream { stream, ssl };
+
+    let websocket_options = WebSocketOptions {
+        path: "/ws/ledpanel",
+        host,
+        origin,
+        sub_protocols: None,
+        additional_headers: None,
+    };
+
+    // send websocket open handshake
+    framer.connect(stream, &websocket_options)?;
+
+    rprintln!("[INF] Websocket opening handshake complete");
+
+    /*
+        // read one message at a time and display it
+        while let Some(message) = framer.read_text(stream, &mut frame_buf)? {
+            rprintln!("[INF] Websocket received: {}", message);
+            led_panel.scroll_str(message)?;
+        }
+    */
     Ok(())
 }
