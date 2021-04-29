@@ -14,3 +14,9 @@ $ cd BearSSL
 $ make CONF=cortexm3
 <this will generate a statically linked library file libbearssl.a in the ./build folder>
 <copy libbearssl.a to your rust project root (same folder as build.rs)>
+
+HOW TO UPDATE TA (Trust Anchor)
+You may need to use your own root authority trust anchor. I used the Lets Encrypt Root Authority by exporting the certificate from my browser (right click on the SSL lock icon) The instructions can be found on the BearSSL website under the "API OVERVIEW" section under the "Initialisation" heading.
+I could not get the BearSSL tools to build in Linux so I used Windows for that. Here are the instructions using Visual Studio 2019: Run the command line tool "x64 Native Tools Command Prompt for VS 2019" which will bring things lik nmake into scope.
+from the BearSSL root folder type "nmake". The file brssl.exe should appear in the build folder.
+

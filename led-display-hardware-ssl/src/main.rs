@@ -13,7 +13,7 @@ mod bearssl;
 use bearssl::*;
 
 use crate::bearssl::*;
-use core::{fmt::Arguments, isize, mem::MaybeUninit, pin::Pin};
+use core::{fmt::Arguments, isize, mem::MaybeUninit, pin::Pin, ptr::null};
 use cty::{c_void, size_t};
 
 use core::cell::RefCell;
@@ -91,6 +91,54 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     }
 }
 
+static mut TA0_DN: [u8; 81] = [
+    0x30, 0x4F, 0x31, 0x0B, 0x30, 0x09, 0x06, 0x03, 0x55, 0x04, 0x06, 0x13, 0x02, 0x55, 0x53, 0x31,
+    0x29, 0x30, 0x27, 0x06, 0x03, 0x55, 0x04, 0x0A, 0x13, 0x20, 0x49, 0x6E, 0x74, 0x65, 0x72, 0x6E,
+    0x65, 0x74, 0x20, 0x53, 0x65, 0x63, 0x75, 0x72, 0x69, 0x74, 0x79, 0x20, 0x52, 0x65, 0x73, 0x65,
+    0x61, 0x72, 0x63, 0x68, 0x20, 0x47, 0x72, 0x6F, 0x75, 0x70, 0x31, 0x15, 0x30, 0x13, 0x06, 0x03,
+    0x55, 0x04, 0x03, 0x13, 0x0C, 0x49, 0x53, 0x52, 0x47, 0x20, 0x52, 0x6F, 0x6F, 0x74, 0x20, 0x58,
+    0x31,
+];
+
+// for the LetsEncrypt trust anchor
+static mut TA0_RSA_N: [u8; 512] = [
+    0xAD, 0xE8, 0x24, 0x73, 0xF4, 0x14, 0x37, 0xF3, 0x9B, 0x9E, 0x2B, 0x57, 0x28, 0x1C, 0x87, 0xBE,
+    0xDC, 0xB7, 0xDF, 0x38, 0x90, 0x8C, 0x6E, 0x3C, 0xE6, 0x57, 0xA0, 0x78, 0xF7, 0x75, 0xC2, 0xA2,
+    0xFE, 0xF5, 0x6A, 0x6E, 0xF6, 0x00, 0x4F, 0x28, 0xDB, 0xDE, 0x68, 0x86, 0x6C, 0x44, 0x93, 0xB6,
+    0xB1, 0x63, 0xFD, 0x14, 0x12, 0x6B, 0xBF, 0x1F, 0xD2, 0xEA, 0x31, 0x9B, 0x21, 0x7E, 0xD1, 0x33,
+    0x3C, 0xBA, 0x48, 0xF5, 0xDD, 0x79, 0xDF, 0xB3, 0xB8, 0xFF, 0x12, 0xF1, 0x21, 0x9A, 0x4B, 0xC1,
+    0x8A, 0x86, 0x71, 0x69, 0x4A, 0x66, 0x66, 0x6C, 0x8F, 0x7E, 0x3C, 0x70, 0xBF, 0xAD, 0x29, 0x22,
+    0x06, 0xF3, 0xE4, 0xC0, 0xE6, 0x80, 0xAE, 0xE2, 0x4B, 0x8F, 0xB7, 0x99, 0x7E, 0x94, 0x03, 0x9F,
+    0xD3, 0x47, 0x97, 0x7C, 0x99, 0x48, 0x23, 0x53, 0xE8, 0x38, 0xAE, 0x4F, 0x0A, 0x6F, 0x83, 0x2E,
+    0xD1, 0x49, 0x57, 0x8C, 0x80, 0x74, 0xB6, 0xDA, 0x2F, 0xD0, 0x38, 0x8D, 0x7B, 0x03, 0x70, 0x21,
+    0x1B, 0x75, 0xF2, 0x30, 0x3C, 0xFA, 0x8F, 0xAE, 0xDD, 0xDA, 0x63, 0xAB, 0xEB, 0x16, 0x4F, 0xC2,
+    0x8E, 0x11, 0x4B, 0x7E, 0xCF, 0x0B, 0xE8, 0xFF, 0xB5, 0x77, 0x2E, 0xF4, 0xB2, 0x7B, 0x4A, 0xE0,
+    0x4C, 0x12, 0x25, 0x0C, 0x70, 0x8D, 0x03, 0x29, 0xA0, 0xE1, 0x53, 0x24, 0xEC, 0x13, 0xD9, 0xEE,
+    0x19, 0xBF, 0x10, 0xB3, 0x4A, 0x8C, 0x3F, 0x89, 0xA3, 0x61, 0x51, 0xDE, 0xAC, 0x87, 0x07, 0x94,
+    0xF4, 0x63, 0x71, 0xEC, 0x2E, 0xE2, 0x6F, 0x5B, 0x98, 0x81, 0xE1, 0x89, 0x5C, 0x34, 0x79, 0x6C,
+    0x76, 0xEF, 0x3B, 0x90, 0x62, 0x79, 0xE6, 0xDB, 0xA4, 0x9A, 0x2F, 0x26, 0xC5, 0xD0, 0x10, 0xE1,
+    0x0E, 0xDE, 0xD9, 0x10, 0x8E, 0x16, 0xFB, 0xB7, 0xF7, 0xA8, 0xF7, 0xC7, 0xE5, 0x02, 0x07, 0x98,
+    0x8F, 0x36, 0x08, 0x95, 0xE7, 0xE2, 0x37, 0x96, 0x0D, 0x36, 0x75, 0x9E, 0xFB, 0x0E, 0x72, 0xB1,
+    0x1D, 0x9B, 0xBC, 0x03, 0xF9, 0x49, 0x05, 0xD8, 0x81, 0xDD, 0x05, 0xB4, 0x2A, 0xD6, 0x41, 0xE9,
+    0xAC, 0x01, 0x76, 0x95, 0x0A, 0x0F, 0xD8, 0xDF, 0xD5, 0xBD, 0x12, 0x1F, 0x35, 0x2F, 0x28, 0x17,
+    0x6C, 0xD2, 0x98, 0xC1, 0xA8, 0x09, 0x64, 0x77, 0x6E, 0x47, 0x37, 0xBA, 0xCE, 0xAC, 0x59, 0x5E,
+    0x68, 0x9D, 0x7F, 0x72, 0xD6, 0x89, 0xC5, 0x06, 0x41, 0x29, 0x3E, 0x59, 0x3E, 0xDD, 0x26, 0xF5,
+    0x24, 0xC9, 0x11, 0xA7, 0x5A, 0xA3, 0x4C, 0x40, 0x1F, 0x46, 0xA1, 0x99, 0xB5, 0xA7, 0x3A, 0x51,
+    0x6E, 0x86, 0x3B, 0x9E, 0x7D, 0x72, 0xA7, 0x12, 0x05, 0x78, 0x59, 0xED, 0x3E, 0x51, 0x78, 0x15,
+    0x0B, 0x03, 0x8F, 0x8D, 0xD0, 0x2F, 0x05, 0xB2, 0x3E, 0x7B, 0x4A, 0x1C, 0x4B, 0x73, 0x05, 0x12,
+    0xFC, 0xC6, 0xEA, 0xE0, 0x50, 0x13, 0x7C, 0x43, 0x93, 0x74, 0xB3, 0xCA, 0x74, 0xE7, 0x8E, 0x1F,
+    0x01, 0x08, 0xD0, 0x30, 0xD4, 0x5B, 0x71, 0x36, 0xB4, 0x07, 0xBA, 0xC1, 0x30, 0x30, 0x5C, 0x48,
+    0xB7, 0x82, 0x3B, 0x98, 0xA6, 0x7D, 0x60, 0x8A, 0xA2, 0xA3, 0x29, 0x82, 0xCC, 0xBA, 0xBD, 0x83,
+    0x04, 0x1B, 0xA2, 0x83, 0x03, 0x41, 0xA1, 0xD6, 0x05, 0xF1, 0x1B, 0xC2, 0xB6, 0xF0, 0xA8, 0x7C,
+    0x86, 0x3B, 0x46, 0xA8, 0x48, 0x2A, 0x88, 0xDC, 0x76, 0x9A, 0x76, 0xBF, 0x1F, 0x6A, 0xA5, 0x3D,
+    0x19, 0x8F, 0xEB, 0x38, 0xF3, 0x64, 0xDE, 0xC8, 0x2B, 0x0D, 0x0A, 0x28, 0xFF, 0xF7, 0xDB, 0xE2,
+    0x15, 0x42, 0xD4, 0x22, 0xD0, 0x27, 0x5D, 0xE1, 0x79, 0xFE, 0x18, 0xE7, 0x70, 0x88, 0xAD, 0x4E,
+    0xE6, 0xD9, 0x8B, 0x3A, 0xC6, 0xDD, 0x27, 0x51, 0x6E, 0xFF, 0xBC, 0x64, 0xF5, 0x33, 0x43, 0x4F,
+];
+
+static mut TA0_RSA_E: [u8; 3] = [0x01, 0x00, 0x01];
+
+/*
 static mut TA0_DN: [u8; 65] = [
     0x30, 0x3F, 0x31, 0x24, 0x30, 0x22, 0x06, 0x03, 0x55, 0x04, 0x0A, 0x13, 0x1B, 0x44, 0x69, 0x67,
     0x69, 0x74, 0x61, 0x6C, 0x20, 0x53, 0x69, 0x67, 0x6E, 0x61, 0x74, 0x75, 0x72, 0x65, 0x20, 0x54,
@@ -120,7 +168,11 @@ static mut RSA_N: [u8; 256] = [
 ];
 
 static mut RSA_E: [u8; 3] = [0x01, 0x00, 0x01];
+
+*/
+
 static mut IO_BUF: [u8; 4096] = [0; 4096];
+//static mut IO_BUF: [u8; 8192] = [0; 8192];
 
 // NOTE: we want to get real entropy somehow - The entropy below is hardcoded
 static ENTROPY: [u8; 64] = [
@@ -130,6 +182,8 @@ static ENTROPY: [u8; 64] = [
     0x6C, 0xBA, 0x2C, 0x3A, 0x45, 0xB5, 0x9C, 0xC4, 0x8F, 0xC2, 0xAC, 0x3F, 0x47, 0x63, 0x4C, 0x1E,
 ];
 
+static mut CC: *const br_ssl_client_context = null();
+
 fn build_trust_anchor() -> br_x509_trust_anchor {
     let dn = br_x500_name {
         data: unsafe { TA0_DN.as_mut_ptr() },
@@ -137,10 +191,10 @@ fn build_trust_anchor() -> br_x509_trust_anchor {
     };
 
     let rsa_key = br_rsa_public_key {
-        n: unsafe { RSA_N.as_mut_ptr() },
-        nlen: unsafe { RSA_N.len() as size_t },
-        e: unsafe { RSA_E.as_mut_ptr() },
-        elen: unsafe { RSA_E.len() as size_t },
+        n: unsafe { TA0_RSA_N.as_mut_ptr() },
+        nlen: unsafe { TA0_RSA_N.len() as size_t },
+        e: unsafe { TA0_RSA_E.as_mut_ptr() },
+        elen: unsafe { TA0_RSA_E.len() as size_t },
     };
 
     let pkey = br_x509_pkey {
@@ -162,8 +216,10 @@ fn build_trust_anchor() -> br_x509_trust_anchor {
 // which will be called from BearSSL
 #[no_mangle]
 extern "C" fn time(_time: &crate::bearssl::__time_t) -> crate::bearssl::__time_t {
-    rprintln!("[DBG] time called");
-    1619612137
+    let cc = unsafe { &*CC };
+    // unsafe { &mut *(read_context as *mut EthContext) }
+    rprintln!("[DBG] time called. Err: {}", cc.eng.err);
+    1622375903
 }
 
 #[no_mangle]
@@ -173,62 +229,62 @@ extern "C" fn strlen(s: *const cty::c_char) -> isize {
         count += 1;
     }
 
+    let buf: &[u8] = unsafe { core::slice::from_raw_parts(s, count) };
+    let text = unsafe { core::str::from_utf8_unchecked(buf) };
+    rprintln!("[DBG] strlen for string '{}' is {}", text, count);
+
     count as isize
 }
 
-unsafe extern "C" fn sock_read(
+extern "C" fn sock_read(
     read_context: *mut cty::c_void,
     data: *mut cty::c_uchar,
     len: size_t,
 ) -> cty::c_int {
-    rprintln!("[DBG] sock_read");
+    let context: &mut EthContext = unsafe { &mut *(read_context as *mut EthContext) };
+    let spi = unsafe { &mut *(context.spi as *mut SpiPhysical) };
+    let w5500 = unsafe { &mut *(context.w5500 as *mut W5500<_>) };
+    let connection = unsafe { &mut *(context.connection as *mut Connection) };
+    let delay = unsafe { &mut *(context.delay as *mut Delay) };
+    let buf: &mut [u8] = unsafe { core::slice::from_raw_parts_mut(data, len as usize) };
+    rprintln!("[DBG] sock_read into buffer of {} bytes", len);
 
-    let context: &mut EthContext = &mut *(read_context as *mut EthContext);
-    let spi = &mut *(context.spi as *mut SpiPhysical);
-    let w5500 = &mut *(context.w5500 as *mut W5500<_>);
-    let connection = &mut *(context.connection as *mut Connection);
-
-    let buf: &mut [u8] = core::slice::from_raw_parts_mut(data, len as usize);
+    let mut total_read = 0;
 
     loop {
         wait_for_is_connected(w5500, spi, connection).unwrap();
-        match w5500.try_receive_tcp(spi, connection.socket, buf).unwrap() {
-            Some(len) => {
-                rprintln!("[DBG] sock_read received {} bytes", len);
-                return len as cty::c_int;
+        match w5500
+            .try_receive_tcp(spi, connection.socket, &mut buf[total_read..])
+            .unwrap()
+        {
+            Some(len_read) => {
+                rprintln!("[DBG] sock_read received {} bytes", len_read);
+                total_read += len_read;
+                if (total_read == len) {
+                    return len as cty::c_int;
+                }
             }
             None => {
-                //  delay.delay_ms(10_u16);
+                rprintln!("[DBG] sock_read waiting to receive bytes");
+                delay.delay_ms(250_u16); // TODO: this delay can be way shorter
             }
         };
     }
-
-    let max_len = if buf.len() > len as usize {
-        len as usize
-    } else {
-        buf.len()
-    };
-
-    // TODO: figure out what to do if this panics
-    //   let size = stream.read(&mut buf[..max_len]).unwrap();
 }
 
-unsafe extern "C" fn sock_write(
+extern "C" fn sock_write(
     write_context: *mut cty::c_void,
     data: *const cty::c_uchar,
     len: size_t,
 ) -> cty::c_int {
-    rprintln!("[DBG] sock_write {} bytes", len);
-
-    rprintln!("[DBG] sock_write attempting to write {} bytes", len);
-    let buf: &[u8] = core::slice::from_raw_parts(data, len as usize);
-
+    let buf: &[u8] = unsafe { core::slice::from_raw_parts(data, len as usize) };
+    rprintln!("[INF] sock_write: Sending {} bytes", buf.len());
+    let context: &mut EthContext = unsafe { &mut *(write_context as *mut EthContext) };
+    let spi = unsafe { &mut *(context.spi as *mut SpiPhysical) };
+    let w5500 = unsafe { &mut *(context.w5500 as *mut W5500<_>) };
+    let connection = unsafe { &mut *(context.connection as *mut Connection) };
+    let delay = unsafe { &mut *(context.delay as *mut Delay) };
     let mut start = 0;
-    rprintln!("[INF] Write: Sending {} bytes", buf.len());
-    let context: &mut EthContext = &mut *(write_context as *mut EthContext);
-    let spi = &mut *(context.spi as *mut SpiPhysical);
-    let w5500 = &mut *(context.w5500 as *mut W5500<_>);
-    let connection = &mut *(context.connection as *mut Connection);
 
     loop {
         wait_for_is_connected(w5500, spi, connection).unwrap();
@@ -236,68 +292,15 @@ unsafe extern "C" fn sock_write(
             .send_tcp(spi, connection.socket, &buf[start..])
             .unwrap();
         start += bytes_sent;
-        rprintln!("[INF] Write: Sent {} bytes", bytes_sent);
+        rprintln!("[INF] sock_write: Sent {} bytes", bytes_sent);
 
         if start == buf.len() {
             return len as cty::c_int;
         }
+
+        delay.delay_ms(250_u16);
     }
-
-    rprintln!("[DBG] sock_write wrote {} bytes", len);
-    len as cty::c_int
 }
-
-/*
-lazy_static! {
-    static ref PERIPHERALS: Physical = {
-        // general peripheral setup
-        let cp: cortex_m::Peripherals = cortex_m::Peripherals::take().unwrap();
-        let dp = stm32::Peripherals::take().unwrap();
-
-        let mut rcc = dp.RCC.constrain();
-        let mut afio = dp.AFIO.constrain(&mut rcc.apb2);
-        let mut flash = dp.FLASH.constrain();
-        let clocks = rcc.cfgr.freeze(&mut flash.acr);
-        let mut delay = Delay::new(cp.SYST, clocks);
-
-        // spi setup
-        let mut gpioa = dp.GPIOA.split(&mut rcc.apb2);
-        let sck = gpioa.pa5.into_alternate_push_pull(&mut gpioa.crl);
-        let miso = gpioa.pa6;
-        let mosi = gpioa.pa7.into_alternate_push_pull(&mut gpioa.crl);
-        let mut cs_max7219 = gpioa.pa4.into_push_pull_output(&mut gpioa.crl);
-        let cs_ethernet = gpioa.pa2.into_push_pull_output(&mut gpioa.crl);
-        let spi = Spi::spi1(
-            dp.SPI1,
-            (sck, miso, mosi),
-            &mut afio.mapr,
-            Mode {
-                polarity: Polarity::IdleLow,
-                phase: Phase::CaptureOnFirstTransition,
-            },
-            2.mhz(), // up to 10mhz for max7219 module, 2mhz is max for bluepill
-            clocks,
-            &mut rcc.apb2,
-        );
-
-        Physical { delay, spi, cs_max7219, cs_ethernet }
-    };
-}
-*/
-/*
-extern "C" {
-    static mut DEV: *mut c_void;
-}
-
-pub struct Dev {
-    pub delay: Delay,
-    pub spi: SpiPhysical,
-}*/
-
-/*
-extern "C" {
-    pub fn br_ssl_engine_last_error(cc: *const br_ssl_engine_context) -> cty::c_uint;
-}*/
 
 #[entry]
 fn main() -> ! {
@@ -343,10 +346,10 @@ fn main() -> ! {
 
     rprintln!("[INF] Done initialising");
 
-    //let spi = RefCell::new(spi);
+    //  let spi = RefCell::new(spi);
     let mut w5500 = W5500::new(cs_ethernet);
     let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
-    //let mut led_panel = LedPanel::new(&mut max7219, &spi);
+    //   let mut led_panel = LedPanel::new(&mut max7219, &spi);
 
     let mut connection = Connection::new(Socket::Socket0);
 
@@ -516,7 +519,7 @@ fn main() -> ! {
     let mut read_buf = [0; 256];
     let mut read_cursor = 0;
     let mut write_buf = [0; 256];
-    //let mut frame_buf = [0; 64];
+    let mut frame_buf = [0; 64];
     let mut framer = Framer::new(
         &mut read_buf,
         &mut read_cursor,
@@ -533,30 +536,25 @@ fn main() -> ! {
     };
 
     rprintln!("[INF] Websocket sending opening handshake");
-    delay.delay_ms(1000_u16);
+    delay.delay_ms(250_u16);
+
+    unsafe { CC = &cc as *const br_ssl_client_context };
 
     // send websocket open handshake
     match framer.connect(&mut stream, &websocket_options) {
         Ok(x) => {}
         Err(x) => {
-            rprintln!("BearSSL Engine State: {}", cc.eng.err)
+            //   rprintln!("BearSSL Engine State: {}", cc.eng.err)
         }
-    }
-
-    loop {
-        rprintln!("echo");
-        delay.delay_ms(1000_u16);
     }
 
     rprintln!("[INF] Websocket opening handshake complete");
 
-    /*
-        // read one message at a time and display it
-        while let Some(message) = framer.read_text(stream, &mut frame_buf)? {
-            rprintln!("[INF] Websocket received: {}", message);
-            led_panel.scroll_str(message)?;
-        }
-    */
+    // read one message at a time and display it
+    while let Some(message) = framer.read_text(&mut stream, &mut frame_buf).unwrap() {
+        rprintln!("[INF] Websocket received: {}", message);
+        //  led_panel.scroll_str(message)?;
+    }
 
     //  delay.delay_ms(1000_u16);
 

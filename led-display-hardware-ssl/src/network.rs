@@ -28,7 +28,7 @@ impl<'a> Stream<NetworkError> for SslStream<'a> {
             unsafe { br_sslio_read(self.ssl.ioc, buf as *mut _ as *mut cty::c_void, buf.len()) };
 
         if rlen < 0 {
-            rprintln!("[ERR] br_sslio_read failed to read: {}", rlen);
+            rprintln!("[ERR] br_sslio_read failed to read. rlen: {}", rlen);
             return Err(NetworkError::Closed);
             //  return Err(SslError::ReadBrErr(self.ssl.cc.eng.err));
         }
