@@ -13,7 +13,7 @@ mod bearssl;
 use bearssl::*;
 
 use crate::bearssl::*;
-use core::{fmt::Arguments, mem::MaybeUninit, pin::Pin};
+use core::{fmt::Arguments, isize, mem::MaybeUninit, pin::Pin};
 use cty::{c_void, size_t};
 
 use core::cell::RefCell;
@@ -121,7 +121,6 @@ static mut RSA_N: [u8; 256] = [
 
 static mut RSA_E: [u8; 3] = [0x01, 0x00, 0x01];
 static mut IO_BUF: [u8; 4096] = [0; 4096];
-//static mut IO_BUF: [u8; 2048] = [0; 2048];
 
 // NOTE: we want to get real entropy somehow - The entropy below is hardcoded
 static ENTROPY: [u8; 64] = [
@@ -163,14 +162,18 @@ fn build_trust_anchor() -> br_x509_trust_anchor {
 // which will be called from BearSSL
 #[no_mangle]
 extern "C" fn time(_time: &crate::bearssl::__time_t) -> crate::bearssl::__time_t {
+    rprintln!("[DBG] time called");
     1619612137
 }
 
-// no mangle so that the linker can find this function
-// which will be called from BearSSL
 #[no_mangle]
-extern "C" fn strlen(s: &str) -> usize {
-    s.len()
+extern "C" fn strlen(s: *const cty::c_char) -> isize {
+    let mut count = 0;
+    while (unsafe { *s.add(count) } != b'\0') {
+        count += 1;
+    }
+
+    count as isize
 }
 
 unsafe extern "C" fn sock_read(
