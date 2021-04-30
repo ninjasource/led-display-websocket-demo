@@ -1,8 +1,6 @@
 use crate::bearssl::*;
 use crate::{SpiError, SpiPhysical, SpiTransfer};
-use core::{borrow::BorrowMut, cell::RefCell, convert::Infallible, ptr::null};
-use core::{fmt::Arguments, mem::MaybeUninit, pin::Pin};
-use cortex_m::asm;
+use core::{cell::RefCell, convert::Infallible};
 use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
 use cty::size_t;
 use embedded_websocket::framer::Stream;
@@ -10,7 +8,7 @@ use stm32f1xx_hal::{
     delay::Delay,
     gpio::{gpioa::PA2, Output, PushPull},
 };
-use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
+use w5500::{BufferSize, IpAddress, MacAddress, Socket, SocketStatus, W5500};
 
 // ************ SSL Related ********************
 
@@ -61,6 +59,11 @@ static mut TA0_RSA_N: [u8; 512] = [
 
 pub static mut TA0_RSA_E: [u8; 3] = [0x01, 0x00, 0x01];
 pub static mut IO_BUF: [u8; 4096] = [0; 4096];
+// pub static mut IO_BUF: [u8; 2048] = [0; 2048];
+pub static mut READ_BUF: [u8; 512] = [0; 512];
+pub static mut WRITE_BUF: [u8; 512] = [0; 512];
+pub static mut FRAME_BUF: [u8; 128] = [0; 128];
+pub const NETWORK_HOST: &[u8; 15usize] = b"ninjametal.com\0"; // must be null terminated!!
 
 // NOTE: we want to get real entropy somehow - The entropy below is hardcoded
 pub static ENTROPY: [u8; 64] = [
@@ -69,8 +72,6 @@ pub static ENTROPY: [u8; 64] = [
     0xED, 0x2E, 0xB4, 0xDB, 0x24, 0xD5, 0xF0, 0xBC, 0xEF, 0xF0, 0xE7, 0x36, 0xF2, 0x4D, 0x3B, 0xF2,
     0x6C, 0xBA, 0x2C, 0x3A, 0x45, 0xB5, 0x9C, 0xC4, 0x8F, 0xC2, 0xAC, 0x3F, 0x47, 0x63, 0x4C, 0x1E,
 ];
-
-//pub static mut CC: *const br_ssl_client_context = null();
 
 pub fn build_trust_anchor() -> br_x509_trust_anchor {
     let dn = br_x500_name {
@@ -90,27 +91,22 @@ pub fn build_trust_anchor() -> br_x509_trust_anchor {
         key: br_x509_pkey__bindgen_ty_1 { rsa: rsa_key },
     };
 
-    let ta = br_x509_trust_anchor {
+    br_x509_trust_anchor {
         dn,
         flags: BR_X509_TA_CA, // use for certificates with a root certificate authority
         // flags: 0, // use for self signed certificates
         pkey,
-    };
-
-    ta
+    }
 }
 
-// no mangle so that the linker can find this function
-// which will be called from BearSSL
+// no mangle so that the linker can find this function which will be called from BearSSL
 #[no_mangle]
 extern "C" fn time(_time: &crate::bearssl::__time_t) -> crate::bearssl::__time_t {
-    rprintln!("[DBG] time");
-    //let cc = unsafe { &*CC };
-    // unsafe { &mut *(read_context as *mut EthContext) }
-    //rprintln!("[DBG] time called. Err: {}", cc.eng.err);
+    rprintln!("[INF] time");
     1622375903
 }
 
+// since we are not linking the clib we need to implement this function ourselves
 #[no_mangle]
 extern "C" fn strlen(s: *const cty::c_char) -> isize {
     let mut count = 0;
@@ -118,10 +114,7 @@ extern "C" fn strlen(s: *const cty::c_char) -> isize {
         count += 1;
     }
 
-    //  let buf: &[u8] = unsafe { core::slice::from_raw_parts(s, count) };
-    //  let text = unsafe { core::str::from_utf8_unchecked(buf) };
-    //  rprintln!("[DBG] strlen for string '{}' is {}", text, count);
-
+    rprintln!("[INF] strlen: {}", count);
     count as isize
 }
 
@@ -138,6 +131,8 @@ pub extern "C" fn sock_read(
     let connection = unsafe { &mut *(context.connection as *mut Connection) };
     let delay = unsafe { &*(context.delay as *const RefCell<Delay>) };
     let delay = &mut *delay.borrow_mut();
+    let client_context = unsafe { &mut *context.client_context };
+
     let buf: &mut [u8] = unsafe { core::slice::from_raw_parts_mut(data, len as usize) };
     rprintln!("[INF] sock_read into buffer of {} bytes", len);
 
@@ -147,22 +142,25 @@ pub extern "C" fn sock_read(
         match wait_for_is_connected(w5500, spi, connection, delay) {
             Ok(()) => match w5500.try_receive_tcp(spi, connection.socket, &mut buf[total_read..]) {
                 Ok(Some(len_read)) => {
-                    rprintln!("[DBG] sock_read received {} bytes", len_read);
+                    rprintln!(
+                        "[INF] sock_read received {} bytes. BearSslErr: {}",
+                        len_read,
+                        client_context.eng.err
+                    );
                     total_read += len_read;
-                    if (total_read == len) {
+                    if total_read == len {
                         return len as cty::c_int;
                     }
                 }
                 Ok(None) => {
-                    rprintln!("[DBG] sock_read waiting to receive bytes");
-                    delay.delay_ms(50_u16);
+                    rprintln!("[INF] sock_read waiting to receive bytes");
                 }
                 Err(e) => rprintln!("[ERR] sock_read try_receive_tcp Err: {:?}", e),
             },
             Err(e) => rprintln!("[ERR] sock_read waiting for is connected Err: {:?}", e),
         }
 
-        delay.delay_ms(250_u16);
+        delay.delay_ms(50_u16);
     }
 }
 
@@ -177,12 +175,13 @@ pub extern "C" fn sock_write(
     rprintln!("[INF] sock_write: Sending {} bytes", buf.len());
 
     let context: &mut EthContext = unsafe { &mut *(write_context as *mut EthContext) };
-    let spi = unsafe { &*(context.spi as *const RefCell<SpiPhysical>) };
+    let spi = unsafe { &*context.spi };
     let spi = &mut *spi.borrow_mut();
-    let w5500 = unsafe { &mut *(context.w5500 as *mut W5500Physical) };
-    let connection = unsafe { &mut *(context.connection as *mut Connection) };
-    let delay = unsafe { &*(context.delay as *const RefCell<Delay>) };
+    let w5500 = unsafe { &mut *context.w5500 };
+    let connection = unsafe { &mut *context.connection };
+    let delay = unsafe { &*context.delay };
     let delay = &mut *delay.borrow_mut();
+    let client_context = unsafe { &mut *context.client_context };
     let mut start = 0;
 
     loop {
@@ -190,37 +189,56 @@ pub extern "C" fn sock_write(
             Ok(()) => match w5500.send_tcp(spi, connection.socket, &buf[start..]) {
                 Ok(bytes_sent) => {
                     start += bytes_sent;
-                    rprintln!("[INF] sock_write: Sent {} bytes", bytes_sent);
+                    rprintln!(
+                        "[INF] sock_write: Sent {} bytes. BearSslErr: {}",
+                        bytes_sent,
+                        client_context.eng.err
+                    );
 
                     if start == buf.len() {
                         return len as cty::c_int;
                     }
                 }
-                Err(e) => rprintln!("[ERR] sock_write send_tcp Err: {:?}", e),
+                Err(e) => rprintln!(
+                    "[ERR] sock_write send_tcp Err: {:?}, BearSslErr: {}",
+                    e,
+                    client_context.eng.err
+                ),
             },
-            Err(e) => rprintln!("[ERR] sock_write waiting for is connected Err: {:?}", e),
+            Err(e) => rprintln!(
+                "[ERR] sock_write waiting for is connected Err: {:?}, BearSslErr: {}",
+                e,
+                client_context.eng.err
+            ),
         }
 
-        delay.delay_ms(250_u16);
+        delay.delay_ms(50_u16);
     }
 }
 
-#[derive(Debug)]
-enum SslError {
-    WriteBrErr(i32),
-    ReadBrErr(i32),
-}
+// #[derive(Debug)]
+// enum SslError {
+//    WriteBrErr(i32),
+//    ReadBrErr(i32),
+// }
 
 impl<'a> Stream<NetworkError> for SslStream<'a> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, NetworkError> {
         rprintln!("[INF] read");
 
-        let rlen = unsafe { br_sslio_read(self.ioc, buf as *mut _ as *mut cty::c_void, buf.len()) };
+        let rlen = unsafe {
+            br_sslio_read(
+                self.io_context,
+                buf as *mut _ as *mut cty::c_void,
+                buf.len(),
+            )
+        };
 
         if rlen < 0 {
             rprintln!("[ERR] br_sslio_read failed to read. rlen: {}", rlen);
+
+            // return Err(SslError::ReadBrErr(self.ssl.cc.eng.err));
             return Err(NetworkError::Closed);
-            //  return Err(SslError::ReadBrErr(self.ssl.cc.eng.err));
         }
 
         Ok(rlen as usize)
@@ -229,17 +247,18 @@ impl<'a> Stream<NetworkError> for SslStream<'a> {
     fn write_all(&mut self, buf: &[u8]) -> Result<(), NetworkError> {
         rprintln!("[INF] write_all: {} bytes", buf.len());
 
-        let success = unsafe { br_sslio_write_all(self.ioc, buf.as_ptr() as *const _, buf.len()) };
+        let success =
+            unsafe { br_sslio_write_all(self.io_context, buf.as_ptr() as *const _, buf.len()) };
 
         if success < 0 {
             rprintln!("[ERR] br_sslio_write_all failed: {}", success);
 
-            //return Err(SslError::WriteBrErr(self.ssl.cc.eng.err));
+            // return Err(SslError::WriteBrErr(self.ssl.cc.eng.err));
             return Err(NetworkError::Closed);
         }
 
         rprintln!("[INF] br_sslio_flush");
-        unsafe { br_sslio_flush(self.ioc) };
+        unsafe { br_sslio_flush(self.io_context) };
         Ok(())
     }
 }
@@ -284,24 +303,15 @@ pub struct EthContext {
     pub connection: *mut Connection,
     pub delay: *const RefCell<Delay>,
     pub w5500: *mut W5500Physical,
+    pub client_context: *mut br_ssl_client_context,
 }
-
-pub struct Ssl {
-    pub cc: br_ssl_client_context,
-    pub ioc: br_sslio_context,
-    pub trust_anchors: [br_x509_trust_anchor; 1],
-    pub x509: br_x509_minimal_context,
-    pub context: EthContext,
-}
-
-pub const NETWORK_HOST: &'static str = "ninjametal.com\0"; // must be null terminated!!
 
 pub struct SslStream<'a> {
     w5500: &'a mut W5500Physical,
     connection: &'a mut Connection,
     spi: &'a RefCell<SpiTransfer>,
     delay: &'a RefCell<Delay>,
-    ioc: *mut br_sslio_context,
+    io_context: *mut br_sslio_context,
 }
 
 impl<'a> SslStream<'a> {
@@ -310,14 +320,14 @@ impl<'a> SslStream<'a> {
         connection: &'a mut Connection,
         spi: &'a RefCell<SpiTransfer>,
         delay: &'a RefCell<Delay>,
-        ioc: *mut br_sslio_context,
+        io_context: *mut br_sslio_context,
     ) -> Self {
         Self {
             w5500,
             connection,
             spi,
             delay,
-            ioc,
+            io_context,
         }
     }
 
@@ -332,6 +342,10 @@ impl<'a> SslStream<'a> {
         w5500.set_subnet(spi, &IpAddress::new(255, 255, 255, 0))?;
         w5500.set_ip(spi, &IpAddress::new(192, 168, 1, 33))?;
         w5500.set_gateway(spi, &IpAddress::new(192, 168, 1, 1))?;
+
+        // since we are only using one socket we might as well use all the memory available for sockets
+        w5500.set_rx_buffer_size(spi, self.connection.socket, BufferSize::Size16KB)?;
+        w5500.set_tx_buffer_size(spi, self.connection.socket, BufferSize::Size16KB)?;
         w5500.set_protocol(spi, self.connection.socket, w5500::Protocol::TCP)?;
         w5500.dissconnect(spi, self.connection.socket)?;
         w5500.open_tcp(spi, self.connection.socket)?;

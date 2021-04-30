@@ -1,7 +1,6 @@
-//#![cfg(feature = "spin_no_std")]
 #![no_std]
 #![no_main]
-#![allow(warnings)]
+//#![allow(warnings)]
 
 #[macro_use]
 extern crate rtt_target;
@@ -9,12 +8,11 @@ extern crate rtt_target;
 mod bearssl;
 use bearssl::*;
 
-use crate::{
-    bearssl::*,
-    network::{build_trust_anchor, sock_read, sock_write, ENTROPY, IO_BUF, NETWORK_HOST},
+use crate::network::{
+    build_trust_anchor, sock_read, sock_write, ENTROPY, FRAME_BUF, IO_BUF, NETWORK_HOST, READ_BUF,
+    WRITE_BUF,
 };
-use core::{fmt::Arguments, isize, mem::MaybeUninit, pin::Pin, ptr::null};
-use cty::{c_void, size_t};
+use core::mem::MaybeUninit;
 
 use core::cell::RefCell;
 use cortex_m::asm;
@@ -23,22 +21,22 @@ use display::{LedPanel, LedPanelError};
 use embedded_hal::{blocking::spi::Transfer, spi::Mode, spi::Phase, spi::Polarity};
 use embedded_websocket as ws;
 use max7219_dot_matrix::MAX7219;
-use network::{wait_for_is_connected, Connection, EthContext, NetworkError, Ssl, SslStream};
+use network::{Connection, EthContext, NetworkError, SslStream};
 use rtt_target::{rprintln, rtt_init_print};
 use stm32f1xx_hal::{
     delay::Delay,
     gpio::{
-        gpioa::{PA2, PA4, PA5, PA6, PA7},
-        Alternate, Floating, Input, Output, PushPull,
+        gpioa::{PA5, PA6, PA7},
+        Alternate, Floating, Input, PushPull,
     },
     pac::SPI1,
     prelude::*,
     spi::{Spi, Spi1NoRemap},
     stm32,
 };
-use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
+use w5500::{IpAddress, Socket, W5500};
 use ws::{
-    framer::{Framer, FramerError, Stream},
+    framer::{Framer, FramerError},
     EmptyRng, WebSocketOptions,
 };
 
@@ -113,7 +111,7 @@ fn main() -> ! {
     let mosi = gpioa.pa7.into_alternate_push_pull(&mut gpioa.crl);
     let mut cs_max7219 = gpioa.pa4.into_push_pull_output(&mut gpioa.crl);
     let cs_ethernet = gpioa.pa2.into_push_pull_output(&mut gpioa.crl);
-    let mut spi = Spi::spi1(
+    let spi = Spi::spi1(
         dp.SPI1,
         (sck, miso, mosi),
         &mut afio.mapr,
@@ -139,74 +137,84 @@ fn main() -> ! {
 
     loop {
         let mut connection = Connection::new(Socket::Socket0);
-
-        // ************************************* SSL INIT **************************************************
-        // NOTE: I had trouble putting this INIT functionality into its own function because of all the pointers flying around.
-        // Even though I moved some data out of the init function the pointers seemed to corrupt themselves. I just dont understand enough yet.
-
         rprintln!("[INF] Initialising ssl client");
 
-        rprintln!("[INF] building trust anchors");
-        let ta = build_trust_anchor();
-        let trust_anchors: [br_x509_trust_anchor; 1] = [ta];
-        let mut cc = MaybeUninit::<br_ssl_client_context>::uninit();
-        let mut x509 = MaybeUninit::<br_x509_minimal_context>::uninit();
-        let mut ioc = MaybeUninit::<br_sslio_context>::uninit();
+        // **************************************************** SSL INIT ******************************************************
+        // NOTE: I had trouble putting this INIT functionality into its own function because of all the pointers flying around.
+        // ********************************************************************************************************************
 
+        rprintln!("[INF] building trust anchors");
+        let trust_anchors: [br_x509_trust_anchor; 1] = [build_trust_anchor()];
+        let mut client_context = MaybeUninit::<br_ssl_client_context>::uninit();
+        let mut x509 = MaybeUninit::<br_x509_minimal_context>::uninit();
+        let mut io_context = MaybeUninit::<br_sslio_context>::uninit();
+
+        // client init
         unsafe {
             br_ssl_client_init_full(
-                cc.as_mut_ptr(),
+                client_context.as_mut_ptr(),
                 x509.as_mut_ptr(),
                 trust_anchors.as_ptr(),
                 trust_anchors.len(),
             )
         };
+        let _x509: br_x509_minimal_context = unsafe { x509.assume_init() };
+        let mut client_context: br_ssl_client_context = unsafe { client_context.assume_init() };
+        rprintln!(
+            "[INF] br_ssl_client_init_full: Err: {}",
+            client_context.eng.err
+        );
 
-        let mut x509 = unsafe { x509.assume_init() };
-        let mut cc = unsafe { cc.assume_init() };
-        rprintln!("[INF] br_ssl_client_init_full: Err: {}", cc.eng.err);
-
+        // inject entropy
         unsafe {
             br_ssl_engine_inject_entropy(
-                &mut cc.eng as *mut _,
+                &mut client_context.eng as *mut _,
                 (&ENTROPY).as_ptr() as *const cty::c_void,
                 ENTROPY.len(),
             )
         };
-        rprintln!("[INF] br_ssl_engine_inject_entropy: Err: {}", cc.eng.err);
+        rprintln!(
+            "[INF] br_ssl_engine_inject_entropy: Err: {}",
+            client_context.eng.err
+        );
 
+        // set internal IO buffer
         unsafe {
             br_ssl_engine_set_buffer(
-                &mut cc.eng as *mut _,
+                &mut client_context.eng as *mut _,
                 &mut IO_BUF as *mut _ as *mut cty::c_void,
                 IO_BUF.len(),
                 0, // half duplex
             )
         };
-        rprintln!("[INF] br_ssl_engine_set_buffer: Err: {}", cc.eng.err);
+        rprintln!(
+            "[INF] br_ssl_engine_set_buffer: Err: {}",
+            client_context.eng.err
+        );
 
+        // reset client in preparation for connection
         unsafe {
             br_ssl_client_reset(
-                &mut cc as *mut _,
-                NETWORK_HOST.as_bytes().as_ptr() as *const u8,
+                &mut client_context as *mut _,
+                NETWORK_HOST.as_ptr() as *const u8,
                 0,
             )
         };
-        rprintln!("[INF] br_ssl_client_reset: Err: {}", cc.eng.err);
+        rprintln!("[INF] br_ssl_client_reset: Err: {}", client_context.eng.err);
 
+        // init ssl IO
         let mut context = EthContext {
             w5500: &mut w5500 as *mut _,
             connection: &mut connection as *mut _,
             spi: &spi as *const _,
             delay: &delay as *const _,
+            client_context: &mut client_context as *mut _,
         };
-
         let context_ptr = &mut context as *mut _ as *mut cty::c_void;
-
         unsafe {
             br_sslio_init(
-                ioc.as_mut_ptr(),
-                &mut cc.eng as *mut _,
+                io_context.as_mut_ptr(),
+                &mut client_context.eng as *mut _,
                 Some(sock_read),
                 context_ptr,
                 Some(sock_write),
@@ -214,17 +222,19 @@ fn main() -> ! {
             )
         };
 
-        rprintln!("[INF] br_sslio_init: Err: {}", cc.eng.err);
-        let mut ioc = unsafe { ioc.assume_init() };
+        rprintln!("[INF] br_sslio_init: Err: {}", client_context.eng.err);
+        let mut io_context: br_sslio_context = unsafe { io_context.assume_init() };
 
-        // ********************************** END OF SSL INIT **********************************************
+        // ********************************************************************************************************************
+        // ********************************************* END OF SSL INIT ******************************************************
+        // ********************************************************************************************************************
 
         let mut stream = SslStream::new(
             &mut w5500,
             &mut connection,
             &spi,
             &delay,
-            &mut ioc as *mut br_sslio_context,
+            &mut io_context as *mut _,
         );
 
         match client_connect(&mut led_panel, &mut stream) {
@@ -232,7 +242,7 @@ fn main() -> ! {
             Err(error) => rprintln!("[ERR] {:?}", &error),
         }
 
-        let mut d = &mut *delay.borrow_mut();
+        let d = &mut *delay.borrow_mut();
         d.delay_ms(1000_u16);
     }
 }
@@ -265,14 +275,11 @@ fn client_connect<'a>(
     stream.connect(&host_ip, host_port)?;
 
     let mut websocket = ws::WebSocketClient::new_client(EmptyRng::new());
-    let mut read_buf = [0; 256];
     let mut read_cursor = 0;
-    let mut write_buf = [0; 256];
-    let mut frame_buf = [0; 64];
     let mut framer = Framer::new(
-        &mut read_buf,
+        unsafe { &mut READ_BUF },
         &mut read_cursor,
-        &mut write_buf,
+        unsafe { &mut WRITE_BUF },
         &mut websocket,
     );
 
@@ -290,8 +297,10 @@ fn client_connect<'a>(
     framer.connect(stream, &websocket_options)?;
     rprintln!("[INF] Websocket opening handshake complete");
 
+    let frame_buf = unsafe { &mut FRAME_BUF };
+
     // read one message at a time and display it
-    while let Some(message) = framer.read_text(stream, &mut frame_buf)? {
+    while let Some(message) = framer.read_text(stream, frame_buf)? {
         rprintln!("[INF] Websocket received: {}", message);
         led_panel.scroll_str(message)?;
     }
