@@ -145,21 +145,20 @@ fn main() -> ! {
 
         rprintln!("[INF] building trust anchors");
         let trust_anchors: [br_x509_trust_anchor; 1] = [build_trust_anchor()];
-        let mut client_context = MaybeUninit::<br_ssl_client_context>::uninit();
-        let mut x509 = MaybeUninit::<br_x509_minimal_context>::uninit();
-        let mut io_context = MaybeUninit::<br_sslio_context>::uninit();
+        let mut client_context =
+            unsafe { MaybeUninit::<br_ssl_client_context>::uninit().assume_init() };
+        let mut x509 = unsafe { MaybeUninit::<br_x509_minimal_context>::uninit().assume_init() };
+        let mut io_context = unsafe { MaybeUninit::<br_sslio_context>::uninit().assume_init() };
 
         // client init
         unsafe {
             br_ssl_client_init_full(
-                client_context.as_mut_ptr(),
-                x509.as_mut_ptr(),
+                &mut client_context as *mut _,
+                &mut x509 as *mut _,
                 trust_anchors.as_ptr(),
                 trust_anchors.len(),
             )
         };
-        let _x509: br_x509_minimal_context = unsafe { x509.assume_init() };
-        let mut client_context: br_ssl_client_context = unsafe { client_context.assume_init() };
         rprintln!(
             "[INF] br_ssl_client_init_full: Err: {}",
             client_context.eng.err
@@ -210,10 +209,11 @@ fn main() -> ! {
             delay: &delay as *const _,
             client_context: &mut client_context as *mut _,
         };
+
         let context_ptr = &mut context as *mut _ as *mut cty::c_void;
         unsafe {
             br_sslio_init(
-                io_context.as_mut_ptr(),
+                &mut io_context as *mut _,
                 &mut client_context.eng as *mut _,
                 Some(sock_read),
                 context_ptr,
@@ -223,7 +223,6 @@ fn main() -> ! {
         };
 
         rprintln!("[INF] br_sslio_init: Err: {}", client_context.eng.err);
-        let mut io_context: br_sslio_context = unsafe { io_context.assume_init() };
 
         // ********************************************************************************************************************
         // ********************************************* END OF SSL INIT ******************************************************
@@ -235,6 +234,7 @@ fn main() -> ! {
             &spi,
             &delay,
             &mut io_context as *mut _,
+            &mut client_context as *mut _,
         );
 
         match client_connect(&mut led_panel, &mut stream) {
@@ -242,8 +242,10 @@ fn main() -> ! {
             Err(error) => rprintln!("[ERR] {:?}", &error),
         }
 
-        let d = &mut *delay.borrow_mut();
-        d.delay_ms(1000_u16);
+        // stop further processing
+        loop {}
+        // let d = &mut *delay.borrow_mut();
+        // d.delay_ms(1000_u16);
     }
 }
 

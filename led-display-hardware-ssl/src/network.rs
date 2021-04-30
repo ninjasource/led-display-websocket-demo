@@ -216,12 +216,6 @@ pub extern "C" fn sock_write(
     }
 }
 
-// #[derive(Debug)]
-// enum SslError {
-//    WriteBrErr(i32),
-//    ReadBrErr(i32),
-// }
-
 impl<'a> Stream<NetworkError> for SslStream<'a> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, NetworkError> {
         rprintln!("[INF] read");
@@ -237,8 +231,8 @@ impl<'a> Stream<NetworkError> for SslStream<'a> {
         if rlen < 0 {
             rprintln!("[ERR] br_sslio_read failed to read. rlen: {}", rlen);
 
-            // return Err(SslError::ReadBrErr(self.ssl.cc.eng.err));
-            return Err(NetworkError::Closed);
+            let err = unsafe { &*(self.client_context) }.eng.err;
+            return Err(NetworkError::BearSslReadErr(err));
         }
 
         Ok(rlen as usize)
@@ -253,8 +247,8 @@ impl<'a> Stream<NetworkError> for SslStream<'a> {
         if success < 0 {
             rprintln!("[ERR] br_sslio_write_all failed: {}", success);
 
-            // return Err(SslError::WriteBrErr(self.ssl.cc.eng.err));
-            return Err(NetworkError::Closed);
+            let err = unsafe { &*(self.client_context) }.eng.err;
+            return Err(NetworkError::BearSslWriteErr(err));
         }
 
         rprintln!("[INF] br_sslio_flush");
@@ -270,6 +264,11 @@ pub enum NetworkError {
     Io(W5500Error),
     Closed,
     SocketStatusNone,
+
+    // See BR_ERR_XXXXXX in bearssl.rs for error meaning
+    // BR_ERR_OK = 0
+    BearSslWriteErr(i32),
+    BearSslReadErr(i32),
 }
 
 impl From<W5500Error> for NetworkError {
@@ -312,6 +311,7 @@ pub struct SslStream<'a> {
     spi: &'a RefCell<SpiTransfer>,
     delay: &'a RefCell<Delay>,
     io_context: *mut br_sslio_context,
+    client_context: *mut br_ssl_client_context,
 }
 
 impl<'a> SslStream<'a> {
@@ -321,6 +321,7 @@ impl<'a> SslStream<'a> {
         spi: &'a RefCell<SpiTransfer>,
         delay: &'a RefCell<Delay>,
         io_context: *mut br_sslio_context,
+        client_context: *mut br_ssl_client_context,
     ) -> Self {
         Self {
             w5500,
@@ -328,6 +329,7 @@ impl<'a> SslStream<'a> {
             spi,
             delay,
             io_context,
+            client_context,
         }
     }
 
