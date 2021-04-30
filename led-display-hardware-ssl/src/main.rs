@@ -9,8 +9,8 @@ mod bearssl;
 use bearssl::*;
 
 use crate::network::{
-    build_trust_anchor, sock_read, sock_write, ENTROPY, FRAME_BUF, IO_BUF, NETWORK_HOST, READ_BUF,
-    WRITE_BUF,
+    build_trust_anchor_ta0, build_trust_anchor_ta1, sock_read, sock_write, ENTROPY, FRAME_BUF,
+    IO_BUF, NETWORK_HOST, READ_BUF, WRITE_BUF,
 };
 use core::mem::MaybeUninit;
 
@@ -144,7 +144,8 @@ fn main() -> ! {
         // ********************************************************************************************************************
 
         rprintln!("[INF] building trust anchors");
-        let trust_anchors: [br_x509_trust_anchor; 1] = [build_trust_anchor()];
+        let trust_anchors: [br_x509_trust_anchor; 2] =
+            [build_trust_anchor_ta0(), build_trust_anchor_ta1()];
         let mut client_context =
             unsafe { MaybeUninit::<br_ssl_client_context>::uninit().assume_init() };
         let mut x509 = unsafe { MaybeUninit::<br_x509_minimal_context>::uninit().assume_init() };
