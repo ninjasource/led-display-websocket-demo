@@ -5,29 +5,29 @@ use max7219_dot_matrix::{Command, MAX7219};
 use stm32f1xx_hal::gpio::{gpioa::PA4, Output, PushPull};
 
 // MAX7219 dot matrix board with CS pin PA4
-type MAX7219Physical<'a> = MAX7219<'a, PA4<Output<PushPull>>>;
+type Max7219Physical<'a> = MAX7219<'a, PA4<Output<PushPull>>>;
 
 // the CS output pin on stm32f1xx_hal is Infallible
-type MAX7219Error = max7219_dot_matrix::Error<SpiError, Infallible>;
+type Max7219Error = max7219_dot_matrix::Error<SpiError, Infallible>;
 
 #[derive(Debug)]
 pub enum LedPanelError {
-    Max7219(MAX7219Error),
+    Max7219(Max7219Error),
 }
 
 pub struct LedPanel<'a> {
-    max7219: &'a mut MAX7219Physical<'a>,
+    max7219: &'a mut Max7219Physical<'a>,
     spi: &'a RefCell<dyn Transfer<u8, Error = SpiError>>,
 }
 
-impl From<MAX7219Error> for LedPanelError {
-    fn from(err: MAX7219Error) -> Self {
+impl From<Max7219Error> for LedPanelError {
+    fn from(err: Max7219Error) -> Self {
         LedPanelError::Max7219(err)
     }
 }
 
 impl<'a> LedPanel<'a> {
-    pub fn new(max7219: &'a mut MAX7219Physical<'a>, spi: &'a RefCell<SpiTransfer>) -> Self {
+    pub fn new(max7219: &'a mut Max7219Physical<'a>, spi: &'a RefCell<SpiTransfer>) -> Self {
         LedPanel { max7219, spi }
     }
 
@@ -51,7 +51,7 @@ impl<'a> LedPanel<'a> {
 }
 
 fn clear<'a>(
-    max7219: &mut MAX7219Physical<'a>,
+    max7219: &mut Max7219Physical<'a>,
     spi: &mut dyn Transfer<u8, Error = SpiError>,
 ) -> Result<(), LedPanelError> {
     // clear the display and set defaults
