@@ -1,6 +1,9 @@
 use crate::bearssl::*;
 use crate::{SpiError, SpiPhysical, SpiTransfer};
-use core::{cell::RefCell, convert::Infallible};
+use core::{
+    cell::RefCell,
+    convert::{Infallible, TryInto},
+};
 use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
 use cty::size_t;
 use embedded_websocket::framer::Stream;
@@ -97,6 +100,7 @@ pub static mut READ_BUF: [u8; 512] = [0; 512];
 pub static mut WRITE_BUF: [u8; 512] = [0; 512];
 pub static mut FRAME_BUF: [u8; 128] = [0; 128];
 pub const NETWORK_HOST: &[u8; 15usize] = b"ninjametal.com\0"; // must be null terminated!!
+pub static mut UNIX_TIME: crate::bearssl::__time_t = 0;
 
 // NOTE: we want to get real entropy somehow - The entropy below is hardcoded
 pub static ENTROPY: [u8; 64] = [
@@ -162,7 +166,7 @@ pub fn build_trust_anchor_ta1() -> br_x509_trust_anchor {
 #[no_mangle]
 extern "C" fn time(_time: &crate::bearssl::__time_t) -> crate::bearssl::__time_t {
     rprintln!("[INF] time");
-    1622375903 // 30 May 2021
+    unsafe { UNIX_TIME }
 }
 
 // since we are not linking the clib we need to implement this function ourselves
@@ -214,9 +218,23 @@ pub extern "C" fn sock_read(
                 Ok(None) => {
                     // keep looping
                 }
-                Err(e) => rprintln!("[ERR] sock_read try_receive_tcp Err: {:?}", e),
+                Err(e) => {
+                    rprintln!(
+                        "[ERR] sock_read try_receive_tcp Err: {:?}, BearSslErr: {}",
+                        e,
+                        client_context.eng.err
+                    );
+                    return -1;
+                }
             },
-            Err(e) => rprintln!("[ERR] sock_read waiting for is connected Err: {:?}", e),
+            Err(e) => {
+                rprintln!(
+                    "[ERR] sock_read waiting for is connected Err: {:?}, BearSslErr: {}",
+                    e,
+                    client_context.eng.err
+                );
+                return -1;
+            }
         }
 
         delay.delay_ms(10_u16);
@@ -258,17 +276,23 @@ pub extern "C" fn sock_write(
                         return len as cty::c_int;
                     }
                 }
-                Err(e) => rprintln!(
-                    "[ERR] sock_write send_tcp Err: {:?}, BearSslErr: {}",
+                Err(e) => {
+                    rprintln!(
+                        "[ERR] sock_write send_tcp Err: {:?}, BearSslErr: {}",
+                        e,
+                        client_context.eng.err
+                    );
+                    return -1;
+                }
+            },
+            Err(e) => {
+                rprintln!(
+                    "[ERR] sock_write waiting for is connected Err: {:?}, BearSslErr: {}",
                     e,
                     client_context.eng.err
-                ),
-            },
-            Err(e) => rprintln!(
-                "[ERR] sock_write waiting for is connected Err: {:?}, BearSslErr: {}",
-                e,
-                client_context.eng.err
-            ),
+                );
+                return -1;
+            }
         }
 
         delay.delay_ms(10_u16);
@@ -323,6 +347,8 @@ pub enum NetworkError {
     Io(W5500Error),
     Closed,
     SocketStatusNone,
+    NtpInvalidPacketLength(usize),
+    NtpInvalidVersion(u8),
 
     // See BR_ERR_XXXXXX in bearssl.rs for error meaning
     // BR_ERR_OK = 0
@@ -355,6 +381,81 @@ type W5500Physical = W5500<PA2<Output<PushPull>>>;
 
 // the CS output pin on stm32f1xx_hal is Infallible
 type W5500Error = w5500::Error<SpiError, Infallible>;
+
+pub fn set_time(
+    w5500: &mut W5500Physical,
+    spi: &mut SpiTransfer,
+    socket: Socket,
+    delay: &mut Delay,
+) -> Result<(), NetworkError> {
+    // note that even though the MapleMini has a Real Time Clock built in we cannot rely on it
+    // because we do not know if there will be constant power to keep the clock running and
+    // the MapleMini Clone is missing the 32768 hz crystal that makes the Rtc tick every second
+    // so we don't know how long a tick takes. If you set the frequency to 625hz then you get something
+    // close to a second although there is drift.
+    // For SSL we only need the time once when making the connection so it is OK to fetch the latest
+    // time from an NTP server over the internet every time we attempt to connect
+
+    let mode = 3; // client
+    let li = 0; // leap indicator no warning
+    const SNTP_VERSION_CONSTANT: u8 = 0x20;
+    const NTP_PACKET_LEN: usize = 48;
+    let mut request_packet: [u8; NTP_PACKET_LEN] = [0; NTP_PACKET_LEN];
+    request_packet[0] = li << 6 | SNTP_VERSION_CONSTANT | mode;
+
+    // this is an IP address of an ntp server found using pool.ntp.org
+    let host = IpAddress::new(212, 71, 255, 35);
+    const NTP_PORT: u16 = 123;
+    rprintln!("[INF] Getting time from NTP server {}:{}", host, NTP_PORT);
+
+    // add a delay here so that we don't spam the NTP server if our chip keeps restarting
+    delay.delay_ms(250_u16);
+
+    w5500.send_udp(spi, socket, 0, &host, NTP_PORT, &request_packet)?;
+
+    let mut response_packet: [u8; NTP_PACKET_LEN] = [0; NTP_PACKET_LEN];
+
+    loop {
+        match w5500.try_receive_udp(spi, socket, &mut response_packet)? {
+            Some((_ip, port, len)) => {
+                if port != NTP_PORT {
+                    continue;
+                }
+
+                if len != NTP_PACKET_LEN {
+                    return Err(NetworkError::NtpInvalidPacketLength(len));
+                }
+
+                let version = (response_packet[0] >> 3) & 0x07;
+                if version != 4 {
+                    return Err(NetworkError::NtpInvalidVersion(version));
+                }
+
+                let bytes: [u8; 8] = response_packet[32..40].try_into().unwrap();
+                let timestamp: u64 = u64::from_be_bytes(bytes);
+                let timestamp = if (timestamp & 0x8000_0000_0000_0000) == 0 {
+                    timestamp as u128 + 0x0001_0000_0000_0000_0000
+                } else {
+                    timestamp as u128
+                };
+
+                const UNIX_EPOCH: i64 = 2_208_988_800;
+                let unix_time_seconds = (timestamp >> 32) as i64 - UNIX_EPOCH;
+                rprintln!(
+                    "Fetched unix system time from NTP server: {}",
+                    unix_time_seconds
+                );
+                unsafe { UNIX_TIME = unix_time_seconds };
+
+                return Ok(());
+            }
+
+            None => {} // continue
+        }
+
+        delay.delay_ms(50_u16);
+    }
+}
 
 pub struct EthContext {
     pub spi: *const RefCell<SpiPhysical>,
@@ -403,6 +504,9 @@ impl<'a> SslStream<'a> {
         w5500.set_subnet(spi, &IpAddress::new(255, 255, 255, 0))?;
         w5500.set_ip(spi, &IpAddress::new(192, 168, 1, 33))?;
         w5500.set_gateway(spi, &IpAddress::new(192, 168, 1, 1))?;
+
+        // before we connect use the network card to set the system time
+        set_time(w5500, spi, self.connection.socket, delay)?;
 
         // since we are only using one socket we might as well use all the memory available for sockets
         w5500.set_rx_buffer_size(spi, self.connection.socket, BufferSize::Size16KB)?;

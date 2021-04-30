@@ -21,7 +21,7 @@ rtt-target = { version = "0.3.1", features = ["cortex-m"] } # this is for loggin
 
 # this allows debugging in release mode (otherwise you only see assembly)
 [profile.release]
-# debug = true
+debug = true
 opt-level = 'z'  # Optimize for size.
 lto = true
 codegen-units = 1
@@ -32,5 +32,5 @@ codegen-units = 1
 debug = 2
 debug-assertions = true # <-
 incremental = false
-opt-level = 3 # <-
+opt-level = 'z' # <- a setting of 3 will not work because of the large code size
 overflow-checks = true # <-

@@ -244,7 +244,10 @@ fn main() -> ! {
         }
 
         // stop further processing
+        // comment out the line below this should keep attempting to connect
         loop {}
+
+        // if you uncomment the loop above you should add this delay to prevent the NTP server from being spammed
         // let d = &mut *delay.borrow_mut();
         // d.delay_ms(1000_u16);
     }

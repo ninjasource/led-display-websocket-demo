@@ -2,7 +2,7 @@
 # see `probe-run --list-chips` output
 runner = "probe-run --chip STM32F103CB"
 rustflags = [
-  # "-C", "linker=flip-link",
+  "-C", "linker=flip-link",
   "-C", "link-arg=-Tlink.x",
   # "-C", "link-arg=-Tdefmt.x",
   # This is needed if your flash or ram addresses are not aligned to 0x10000 in memory.x
