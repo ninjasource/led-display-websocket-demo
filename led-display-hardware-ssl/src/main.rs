@@ -133,7 +133,7 @@ fn main() -> ! {
     let spi = RefCell::new(spi);
     let mut w5500 = W5500::new(cs_ethernet);
     let mut max7219 = MAX7219::new(&mut cs_max7219, 20);
-    let mut led_panel = LedPanel::new(&mut max7219, &spi);
+    let mut led_panel = LedPanel::new(&mut max7219, &spi, &delay);
 
     loop {
         let mut connection = Connection::new(Socket::Socket0);

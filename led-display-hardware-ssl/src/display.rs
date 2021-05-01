@@ -1,8 +1,12 @@
 use crate::{SpiError, SpiTransfer};
 use core::{cell::RefCell, convert::Infallible};
+use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
 use embedded_hal::blocking::spi::Transfer;
 use max7219_dot_matrix::{Command, MAX7219};
-use stm32f1xx_hal::gpio::{gpioa::PA4, Output, PushPull};
+use stm32f1xx_hal::{
+    delay::Delay,
+    gpio::{gpioa::PA4, Output, PushPull},
+};
 
 // MAX7219 dot matrix board with CS pin PA4
 type Max7219Physical<'a> = MAX7219<'a, PA4<Output<PushPull>>>;
@@ -18,6 +22,7 @@ pub enum LedPanelError {
 pub struct LedPanel<'a> {
     max7219: &'a mut Max7219Physical<'a>,
     spi: &'a RefCell<dyn Transfer<u8, Error = SpiError>>,
+    delay: &'a RefCell<Delay>,
 }
 
 impl From<Max7219Error> for LedPanelError {
@@ -27,20 +32,32 @@ impl From<Max7219Error> for LedPanelError {
 }
 
 impl<'a> LedPanel<'a> {
-    pub fn new(max7219: &'a mut Max7219Physical<'a>, spi: &'a RefCell<SpiTransfer>) -> Self {
-        LedPanel { max7219, spi }
+    pub fn new(
+        max7219: &'a mut Max7219Physical<'a>,
+        spi: &'a RefCell<SpiTransfer>,
+        delay: &'a RefCell<Delay>,
+    ) -> Self {
+        LedPanel {
+            max7219,
+            spi,
+            delay,
+        }
     }
 
     pub fn scroll_str(&mut self, message: &str) -> Result<(), LedPanelError> {
         let spi = &mut *self.spi.borrow_mut();
+        let delay = &mut *self.delay.borrow_mut();
+
         clear(self.max7219, spi)?;
         let from_pos = self.max7219.get_num_devices() * 8;
         let to_pos = message.len() as i32 * -8;
         let mut pos = from_pos as i32;
+        delay.delay_ms(1_u16);
 
         loop {
             pos -= 1;
             self.max7219.write_str_at_pos(spi, message, pos)?;
+            delay.delay_ms(1_u16);
 
             // done scrolling
             if pos < to_pos {
