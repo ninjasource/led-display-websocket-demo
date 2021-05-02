@@ -1,18 +1,14 @@
 #![no_std]
 #![no_main]
 //#![allow(warnings)]
+//#![cfg(feature = "spin_no_std")]
 
 #[macro_use]
 extern crate rtt_target;
+extern crate lazy_static;
 
 mod bearssl;
-use bearssl::*;
-
-use crate::network::{
-    build_trust_anchor_ta0, build_trust_anchor_ta1, sock_read, sock_write, ENTROPY, FRAME_BUF,
-    IO_BUF, NETWORK_HOST, READ_BUF, WRITE_BUF,
-};
-use core::mem::MaybeUninit;
+mod ssl;
 
 use core::cell::RefCell;
 use cortex_m::asm;
@@ -21,23 +17,18 @@ use display::{LedPanel, LedPanelError};
 use embedded_hal::{blocking::spi::Transfer, spi::Mode, spi::Phase, spi::Polarity};
 use embedded_websocket as ws;
 use max7219_dot_matrix::MAX7219;
-use network::{Connection, EthContext, NetworkError, SslStream};
+use network::NetworkError;
 use rtt_target::{rprintln, rtt_init_print};
-use stm32f1xx_hal::{
-    delay::Delay,
-    gpio::{
-        gpioa::{PA5, PA6, PA7},
-        Alternate, Floating, Input, PushPull,
-    },
-    pac::SPI1,
-    prelude::*,
-    spi::{Spi, Spi1NoRemap},
-    stm32,
-};
+use stm32f1xx_hal::{delay::Delay, prelude::*, spi::Spi, stm32};
 use w5500::{IpAddress, Socket, W5500};
 use ws::{
     framer::{Framer, FramerError},
     EmptyRng, WebSocketOptions,
+};
+
+use crate::{
+    network::TcpStream,
+    ssl::{SslStream, FRAME_BUF, READ_BUF, WRITE_BUF},
 };
 
 mod display;
@@ -70,6 +61,8 @@ impl From<NetworkError> for LedDemoError {
 
 type SpiError = stm32f1xx_hal::spi::Error;
 type SpiTransfer = dyn Transfer<u8, Error = SpiError>;
+
+/*
 type SpiPhysical = Spi<
     SPI1,
     Spi1NoRemap,
@@ -79,7 +72,7 @@ type SpiPhysical = Spi<
         PA7<Alternate<PushPull>>,
     ),
     u8,
->;
+>;*/
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -136,107 +129,9 @@ fn main() -> ! {
     let mut led_panel = LedPanel::new(&mut max7219, &spi, &delay);
 
     loop {
-        let mut connection = Connection::new(Socket::Socket0);
         rprintln!("[INF] Initialising ssl client");
 
-        // **************************************************** SSL INIT ******************************************************
-        // NOTE: I had trouble putting this INIT functionality into its own function because of all the pointers flying around.
-        // ********************************************************************************************************************
-
-        rprintln!("[INF] building trust anchors");
-        let trust_anchors: [br_x509_trust_anchor; 2] =
-            [build_trust_anchor_ta0(), build_trust_anchor_ta1()];
-        let mut client_context =
-            unsafe { MaybeUninit::<br_ssl_client_context>::uninit().assume_init() };
-        let mut x509 = unsafe { MaybeUninit::<br_x509_minimal_context>::uninit().assume_init() };
-        let mut io_context = unsafe { MaybeUninit::<br_sslio_context>::uninit().assume_init() };
-
-        // client init
-        unsafe {
-            br_ssl_client_init_full(
-                &mut client_context as *mut _,
-                &mut x509 as *mut _,
-                trust_anchors.as_ptr(),
-                trust_anchors.len(),
-            )
-        };
-        rprintln!(
-            "[INF] br_ssl_client_init_full: Err: {}",
-            client_context.eng.err
-        );
-
-        // inject entropy
-        unsafe {
-            br_ssl_engine_inject_entropy(
-                &mut client_context.eng as *mut _,
-                (&ENTROPY).as_ptr() as *const cty::c_void,
-                ENTROPY.len(),
-            )
-        };
-        rprintln!(
-            "[INF] br_ssl_engine_inject_entropy: Err: {}",
-            client_context.eng.err
-        );
-
-        // set internal IO buffer
-        unsafe {
-            br_ssl_engine_set_buffer(
-                &mut client_context.eng as *mut _,
-                &mut IO_BUF as *mut _ as *mut cty::c_void,
-                IO_BUF.len(),
-                0, // half duplex
-            )
-        };
-        rprintln!(
-            "[INF] br_ssl_engine_set_buffer: Err: {}",
-            client_context.eng.err
-        );
-
-        // reset client in preparation for connection
-        unsafe {
-            br_ssl_client_reset(
-                &mut client_context as *mut _,
-                NETWORK_HOST.as_ptr() as *const u8,
-                0,
-            )
-        };
-        rprintln!("[INF] br_ssl_client_reset: Err: {}", client_context.eng.err);
-
-        // init ssl IO
-        let mut context = EthContext {
-            w5500: &mut w5500 as *mut _,
-            connection: &mut connection as *mut _,
-            spi: &spi as *const _,
-            delay: &delay as *const _,
-            client_context: &mut client_context as *mut _,
-        };
-
-        let context_ptr = &mut context as *mut _ as *mut cty::c_void;
-        unsafe {
-            br_sslio_init(
-                &mut io_context as *mut _,
-                &mut client_context.eng as *mut _,
-                Some(sock_read),
-                context_ptr,
-                Some(sock_write),
-                context_ptr,
-            )
-        };
-
-        rprintln!("[INF] br_sslio_init: Err: {}", client_context.eng.err);
-
-        // ********************************************************************************************************************
-        // ********************************************* END OF SSL INIT ******************************************************
-        // ********************************************************************************************************************
-
-        let mut stream = SslStream::new(
-            &mut w5500,
-            &mut connection,
-            &spi,
-            &delay,
-            &mut io_context as *mut _,
-            &mut client_context as *mut _,
-        );
+        let mut stream = TcpStream::new(&mut w5500, Socket::Socket0, &delay, &spi);
 
         match client_connect(&mut led_panel, &mut stream) {
             Ok(()) => rprintln!("[INF] Connection closed"),
@@ -255,7 +150,7 @@ fn main() -> ! {
 
 fn client_connect<'a>(
     led_panel: &mut LedPanel,
-    stream: &mut SslStream<'a>,
+    stream: &'a mut TcpStream<'a>,
 ) -> Result<(), LedDemoError> {
     rprintln!("[INF] Client connecting");
 
@@ -280,6 +175,11 @@ fn client_connect<'a>(
     // open tcp stream
     stream.connect(&host_ip, host_port)?;
 
+    let mut ssl_stream = SslStream::new(stream);
+    ssl_stream.init();
+
+    // hello(ssl_stream);
+
     let mut websocket = ws::WebSocketClient::new_client(EmptyRng::new());
     let mut read_cursor = 0;
     let mut framer = Framer::new(
@@ -300,16 +200,20 @@ fn client_connect<'a>(
     rprintln!("[INF] Websocket sending opening handshake");
 
     // send websocket open handshake
-    framer.connect(stream, &websocket_options)?;
+    framer.connect(&mut ssl_stream, &websocket_options)?;
     rprintln!("[INF] Websocket opening handshake complete");
+    /*
+        let frame_buf = unsafe { &mut FRAME_BUF };
 
-    let frame_buf = unsafe { &mut FRAME_BUF };
-
-    // read one message at a time and display it
-    while let Some(message) = framer.read_text(stream, frame_buf)? {
-        rprintln!("[INF] Websocket received: {}", message);
-        led_panel.scroll_str(message)?;
-    }
-
+        // read one message at a time and display it
+        while let Some(message) = framer.read_text(&mut ssl_stream, frame_buf)? {
+            rprintln!("[INF] Websocket received: {}", message);
+            led_panel.scroll_str(message)?;
+        }
+    */
     Ok(())
+}
+
+fn hello(stream: SslStream) {
+    //
 }
