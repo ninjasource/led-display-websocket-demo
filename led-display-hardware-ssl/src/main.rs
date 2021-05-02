@@ -1,25 +1,29 @@
 #![no_std]
 #![no_main]
 //#![allow(warnings)]
-//#![cfg(feature = "spin_no_std")]
 
 #[macro_use]
 extern crate rtt_target;
-extern crate lazy_static;
 
 mod bearssl;
 mod ssl;
 
-use core::cell::RefCell;
+use core::{cell::RefCell, convert::Infallible};
 use cortex_m::asm;
 use cortex_m_rt::entry;
 use display::{LedPanel, LedPanelError};
 use embedded_hal::{blocking::spi::Transfer, spi::Mode, spi::Phase, spi::Polarity};
 use embedded_websocket as ws;
 use max7219_dot_matrix::MAX7219;
-use network::NetworkError;
 use rtt_target::{rprintln, rtt_init_print};
-use stm32f1xx_hal::{delay::Delay, prelude::*, spi::Spi, stm32};
+use stm32f1xx_hal::{
+    delay::Delay,
+    gpio::{gpioa::PA2, Output, PushPull},
+    prelude::*,
+    spi::Spi,
+    stm32,
+};
+use tcp::NetworkError;
 use w5500::{IpAddress, Socket, W5500};
 use ws::{
     framer::{Framer, FramerError},
@@ -27,12 +31,13 @@ use ws::{
 };
 
 use crate::{
-    network::TcpStream,
     ssl::{SslStream, FRAME_BUF, READ_BUF, WRITE_BUF},
+    tcp::TcpStream,
 };
 
 mod display;
-mod network;
+mod tcp;
+mod time;
 
 #[derive(Debug)]
 enum LedDemoError {
@@ -59,20 +64,14 @@ impl From<NetworkError> for LedDemoError {
     }
 }
 
-type SpiError = stm32f1xx_hal::spi::Error;
 type SpiTransfer = dyn Transfer<u8, Error = SpiError>;
+type SpiError = stm32f1xx_hal::spi::Error;
 
-/*
-type SpiPhysical = Spi<
-    SPI1,
-    Spi1NoRemap,
-    (
-        PA5<Alternate<PushPull>>,
-        PA6<Input<Floating>>,
-        PA7<Alternate<PushPull>>,
-    ),
-    u8,
->;*/
+// W5500 ethernet card with CS pin PA2
+type W5500Physical = W5500<PA2<Output<PushPull>>>;
+
+// the CS output pin on stm32f1xx_hal is Infallible
+type W5500Error = w5500::Error<SpiError, Infallible>;
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -130,10 +129,9 @@ fn main() -> ! {
 
     loop {
         rprintln!("[INF] Initialising ssl client");
+        let stream = TcpStream::new(&mut w5500, Socket::Socket0, &delay, &spi);
 
-        let mut stream = TcpStream::new(&mut w5500, Socket::Socket0, &delay, &spi);
-
-        match client_connect(&mut led_panel, &mut stream) {
+        match client_connect(&mut led_panel, stream) {
             Ok(()) => rprintln!("[INF] Connection closed"),
             Err(error) => rprintln!("[ERR] {:?}", &error),
         }
@@ -150,7 +148,7 @@ fn main() -> ! {
 
 fn client_connect<'a>(
     led_panel: &mut LedPanel,
-    stream: &'a mut TcpStream<'a>,
+    mut stream: TcpStream<'a>,
 ) -> Result<(), LedDemoError> {
     rprintln!("[INF] Client connecting");
 
@@ -178,10 +176,9 @@ fn client_connect<'a>(
     let mut ssl_stream = SslStream::new(stream);
     ssl_stream.init();
 
-    // hello(ssl_stream);
-
     let mut websocket = ws::WebSocketClient::new_client(EmptyRng::new());
     let mut read_cursor = 0;
+
     let mut framer = Framer::new(
         unsafe { &mut READ_BUF },
         &mut read_cursor,
@@ -202,18 +199,14 @@ fn client_connect<'a>(
     // send websocket open handshake
     framer.connect(&mut ssl_stream, &websocket_options)?;
     rprintln!("[INF] Websocket opening handshake complete");
-    /*
-        let frame_buf = unsafe { &mut FRAME_BUF };
 
-        // read one message at a time and display it
-        while let Some(message) = framer.read_text(&mut ssl_stream, frame_buf)? {
-            rprintln!("[INF] Websocket received: {}", message);
-            led_panel.scroll_str(message)?;
-        }
-    */
+    let frame_buf = unsafe { &mut FRAME_BUF };
+
+    // read one message at a time and display it
+    while let Some(message) = framer.read_text(&mut ssl_stream, frame_buf)? {
+        rprintln!("[INF] Websocket received: {}", message);
+        led_panel.scroll_str(message)?;
+    }
+
     Ok(())
-}
-
-fn hello(stream: SslStream) {
-    //
 }

@@ -23,4 +23,5 @@ cargo run
 
 TROUBLESHOOING:
 
-If you want to troubleshoot the network traffic you can set the gateway to a machine on your local network where you can run a packet sniffer like wireshark.
+If you want to troubleshoot the network traffic you can set the gateway to a machine on your local network
+and point the w5500 card to that gateway. You and then run a packet sniffer like wireshark.

@@ -1,19 +1,17 @@
-/*use crate::{network::NetworkError, SpiTransfer};
+use crate::{tcp::NetworkError, SpiTransfer, W5500Physical};
 use core::convert::TryInto;
 use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
-use stm32f1xx_hal::{
-    delay::Delay,
-    gpio::{gpioa::PA2, Output, PushPull},
-};
-use w5500::{IpAddress, Socket, W5500};
+use stm32f1xx_hal::delay::Delay;
+use w5500::{IpAddress, Socket};
 
-type W5500Physical = W5500<PA2<Output<PushPull>>>;
+pub static mut UNIX_TIME: crate::bearssl::__time_t = 0;
 
+// NOTE: this should only be called AFTER the w5500 has been correctly set up
 pub fn set_time(
     w5500: &mut W5500Physical,
-    spi: &mut SpiTransfer,
     socket: Socket,
     delay: &mut Delay,
+    spi: &mut SpiTransfer,
 ) -> Result<(), NetworkError> {
     // note that even though the MapleMini has a Real Time Clock built in we cannot rely on it
     // because we do not know if there will be constant power to keep the clock running and
@@ -38,6 +36,7 @@ pub fn set_time(
     // add a delay here so that we don't spam the NTP server if our chip keeps restarting
     delay.delay_ms(250_u16);
 
+    w5500.set_protocol(spi, socket, w5500::Protocol::UDP)?;
     w5500.send_udp(spi, socket, 0, &host, NTP_PORT, &request_packet)?;
 
     let mut response_packet: [u8; NTP_PACKET_LEN] = [0; NTP_PACKET_LEN];
@@ -83,4 +82,3 @@ pub fn set_time(
         delay.delay_ms(50_u16);
     }
 }
-*/

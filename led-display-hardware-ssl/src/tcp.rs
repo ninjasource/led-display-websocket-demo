@@ -1,20 +1,17 @@
-use crate::{SpiError, SpiTransfer};
-use core::{cell::RefCell, convert::Infallible};
+use crate::{time::set_time, SpiTransfer, W5500Error, W5500Physical};
+use core::cell::RefCell;
 use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
 use embedded_websocket::framer::Stream;
-use stm32f1xx_hal::{
-    delay::Delay,
-    gpio::{gpioa::PA2, Output, PushPull},
-};
-use w5500::{IpAddress, MacAddress, Socket, SocketStatus, W5500};
+use stm32f1xx_hal::delay::Delay;
+use w5500::{IpAddress, MacAddress, Socket, SocketStatus};
 
 #[derive(Debug)]
 pub enum NetworkError {
     Io(W5500Error),
     Closed,
     SocketStatusNone,
-    //  NtpInvalidPacketLength(usize),
-    //  NtpInvalidVersion(u8),
+    NtpInvalidPacketLength(usize),
+    NtpInvalidVersion(u8),
 
     // See BR_ERR_XXXXXX in bearssl.rs for error meaning
     // BR_ERR_OK = 0
@@ -41,12 +38,6 @@ impl Connection {
         }
     }
 }
-
-// W5500 ethernet card with CS pin PA2
-type W5500Physical = W5500<PA2<Output<PushPull>>>;
-
-// the CS output pin on stm32f1xx_hal is Infallible
-type W5500Error = w5500::Error<SpiError, Infallible>;
 
 pub struct TcpStream<'a> {
     w5500: &'a mut W5500Physical,
@@ -83,6 +74,9 @@ impl<'a> TcpStream<'a> {
         w5500.set_subnet(spi, &IpAddress::new(255, 255, 255, 0))?;
         w5500.set_ip(spi, &IpAddress::new(192, 168, 1, 33))?;
         w5500.set_gateway(spi, &IpAddress::new(192, 168, 1, 1))?;
+
+        set_time(w5500, Socket::Socket0, delay, spi)?;
+
         w5500.set_protocol(spi, self.connection.socket, w5500::Protocol::TCP)?;
         w5500.dissconnect(spi, self.connection.socket)?;
         w5500.open_tcp(spi, self.connection.socket)?;

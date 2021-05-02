@@ -3,7 +3,8 @@ use embedded_websocket::framer::Stream;
 
 use crate::{
     bearssl::*,
-    network::{NetworkError, TcpStream},
+    tcp::{NetworkError, TcpStream},
+    time::UNIX_TIME,
 };
 use core::{marker::PhantomPinned, mem::MaybeUninit};
 
@@ -86,13 +87,12 @@ static mut TA1_RSA_N: [u8; 256] = [
 
 pub static mut TA1_RSA_E: [u8; 3] = [0x01, 0x00, 0x01];
 
-pub static mut IO_BUF: [u8; 4096] = [0; 4096];
-// pub static mut IO_BUF: [u8; 2048] = [0; 2048];
+//pub static mut IO_BUF: [u8; 4096] = [0; 4096];
+pub static mut IO_BUF: [u8; 2048] = [0; 2048];
 pub static mut READ_BUF: [u8; 512] = [0; 512];
 pub static mut WRITE_BUF: [u8; 512] = [0; 512];
 pub static mut FRAME_BUF: [u8; 128] = [0; 128];
 pub const NETWORK_HOST: &[u8; 15usize] = b"ninjametal.com\0"; // must be null terminated!!
-pub static mut UNIX_TIME: crate::bearssl::__time_t = 0;
 
 // NOTE: we want to get real entropy somehow - The entropy below is hardcoded
 pub static ENTROPY: [u8; 64] = [
@@ -174,16 +174,19 @@ extern "C" fn strlen(s: *const cty::c_char) -> isize {
 }
 
 pub struct SslStream<'a> {
-    stream: &'a mut TcpStream<'a>,
+    stream: TcpStream<'a>,
     trust_anchors: [br_x509_trust_anchor; 2],
     client_context: br_ssl_client_context,
     x509: br_x509_minimal_context,
     io_context: br_sslio_context,
-    _marker: PhantomPinned, // TODO: check if this actually works. We dont want SslStream to move because we hold pointers to all the br_ instances
+
+    // TODO: check if this actually works.
+    // We dont want SslStream to move because we hold pointers to all the br_xx instances
+    _marker: PhantomPinned,
 }
 
 impl<'a> SslStream<'a> {
-    pub fn new(stream: &'a mut TcpStream<'a>) -> Self {
+    pub fn new(stream: TcpStream<'a>) -> Self {
         let trust_anchors: [br_x509_trust_anchor; 2] =
             [build_trust_anchor_ta0(), build_trust_anchor_ta1()];
         let client_context =
@@ -257,7 +260,7 @@ impl<'a> SslStream<'a> {
             self.client_context.eng.err
         );
 
-        let context = self.stream as *mut _ as *mut cty::c_void;
+        let context = &mut self.stream as *mut _ as *mut cty::c_void;
 
         unsafe {
             br_sslio_init(
