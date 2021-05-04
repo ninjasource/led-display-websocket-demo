@@ -12,28 +12,30 @@ use core::{cell::RefCell, convert::Infallible};
 use cortex_m::asm;
 use cortex_m_rt::entry;
 use display::{LedPanel, LedPanelError};
-use embedded_hal::{blocking::spi::Transfer, spi::Mode, spi::Phase, spi::Polarity};
+use embedded_hal::{spi::Mode, spi::Phase, spi::Polarity};
 use embedded_websocket as ws;
 use max7219_dot_matrix::MAX7219;
 use rtt_target::{rprintln, rtt_init_print};
+use ssl::SslError;
 use stm32f1xx_hal::{
     delay::Delay,
-    gpio::{gpioa::PA2, Output, PushPull},
+    gpio::{
+        gpioa::{PA2, PA5, PA6, PA7},
+        Alternate, Floating, Input, Output, PushPull,
+    },
+    pac::SPI1,
     prelude::*,
-    spi::Spi,
+    spi::{Spi, Spi1NoRemap},
     stm32,
 };
-use tcp::NetworkError;
+use tcp::TcpError;
 use w5500::{IpAddress, Socket, W5500};
 use ws::{
     framer::{Framer, FramerError},
     EmptyRng, WebSocketOptions,
 };
 
-use crate::{
-    ssl::{SslStream, FRAME_BUF, READ_BUF, WRITE_BUF},
-    tcp::TcpStream,
-};
+use crate::{ssl::SslStream, tcp::TcpStream};
 
 mod display;
 mod tcp;
@@ -42,8 +44,8 @@ mod time;
 #[derive(Debug)]
 enum LedDemoError {
     Display(LedPanelError),
-    Network(NetworkError),
-    Framer(FramerError<NetworkError>),
+    Tcp(TcpError),
+    Framer(FramerError<SslError>),
 }
 
 impl From<LedPanelError> for LedDemoError {
@@ -52,19 +54,30 @@ impl From<LedPanelError> for LedDemoError {
     }
 }
 
-impl From<FramerError<NetworkError>> for LedDemoError {
-    fn from(err: FramerError<NetworkError>) -> LedDemoError {
+impl From<FramerError<SslError>> for LedDemoError {
+    fn from(err: FramerError<SslError>) -> LedDemoError {
         LedDemoError::Framer(err)
     }
 }
 
-impl From<NetworkError> for LedDemoError {
-    fn from(err: NetworkError) -> LedDemoError {
-        LedDemoError::Network(err)
+impl From<TcpError> for LedDemoError {
+    fn from(err: TcpError) -> LedDemoError {
+        LedDemoError::Tcp(err)
     }
 }
 
-type SpiTransfer = dyn Transfer<u8, Error = SpiError>;
+// Spi port 1
+type SpiPhysical = Spi<
+    SPI1,
+    Spi1NoRemap,
+    (
+        PA5<Alternate<PushPull>>,
+        PA6<Input<Floating>>,
+        PA7<Alternate<PushPull>>,
+    ),
+    u8,
+>;
+
 type SpiError = stm32f1xx_hal::spi::Error;
 
 // W5500 ethernet card with CS pin PA2
@@ -140,18 +153,18 @@ fn main() -> ! {
         // comment out the line below this should keep attempting to connect
         loop {}
 
-        // if you uncomment the loop above you should add this delay to prevent the NTP server from being spammed
+        // if you uncomment the loop above you should add this delay to prevent the
+        // NTP time server from being spammed if there is a recurring error
         // let d = &mut *delay.borrow_mut();
         // d.delay_ms(1000_u16);
     }
 }
 
-fn client_connect<'a>(
-    led_panel: &mut LedPanel,
-    mut stream: TcpStream<'a>,
-) -> Result<(), LedDemoError> {
+fn client_connect(led_panel: &mut LedPanel, mut stream: TcpStream) -> Result<(), LedDemoError> {
     rprintln!("[INF] Client connecting");
-
+    let mut read_buf: [u8; 512] = [0; 512];
+    let mut write_buf: [u8; 512] = [0; 512];
+    let mut frame_buf: [u8; 128] = [0; 128];
     // remote connection
     //let host_ip = IpAddress::new(51, 140, 68, 75);
     //let host_port = 80;
@@ -180,9 +193,9 @@ fn client_connect<'a>(
     let mut read_cursor = 0;
 
     let mut framer = Framer::new(
-        unsafe { &mut READ_BUF },
+        &mut read_buf,
         &mut read_cursor,
-        unsafe { &mut WRITE_BUF },
+        &mut write_buf,
         &mut websocket,
     );
 
@@ -200,10 +213,8 @@ fn client_connect<'a>(
     framer.connect(&mut ssl_stream, &websocket_options)?;
     rprintln!("[INF] Websocket opening handshake complete");
 
-    let frame_buf = unsafe { &mut FRAME_BUF };
-
     // read one message at a time and display it
-    while let Some(message) = framer.read_text(&mut ssl_stream, frame_buf)? {
+    while let Some(message) = framer.read_text(&mut ssl_stream, &mut frame_buf)? {
         rprintln!("[INF] Websocket received: {}", message);
         led_panel.scroll_str(message)?;
     }

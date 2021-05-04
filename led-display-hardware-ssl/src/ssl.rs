@@ -1,12 +1,36 @@
 use cty::size_t;
 use embedded_websocket::framer::Stream;
 
-use crate::{
-    bearssl::*,
-    tcp::{NetworkError, TcpStream},
-    time::UNIX_TIME,
-};
+use crate::{bearssl::*, tcp::TcpStream, time::UNIX_TIME};
 use core::{marker::PhantomPinned, mem::MaybeUninit};
+
+// Notes on safety and use of unsafe rust in this module.
+// This module uses the statically linked BearSsl library to perform all the TLS operations
+// Any FFI call is unsafe. Additionally, for objects like br_ssl_client_context and br_sslio_context
+// we set asside the memory on the stack but we let the BearSsl library set the contents of that memory up.
+// Since we take pointers to these objects and pass those pointers to the BearSsl library it is important
+// to make sure that the the instances that those pointers point to do not move. This is why we call new()
+// and then init() in a separate step once the instances are safely moved inside the SslStream struct.
+// The largest object IO_BUF is statically created because BearSsl uses it internally. Since the TLS 1.2
+// protocol supports client buffer size negotiation we can get away with using a buffer much smaller than
+// the 64KB you would normally need if this was a TLS server.
+
+// Note about the chain of trust
+// There are only two root certificates in here which should be sufficient for any certificate signed by
+// the free certificate authority Lets Encrypt so make sure your website uses that certificate authority.
+// Alternatively add the trust anchor of your CA below.
+
+// Note on cryptography
+// The biggest issue with the code below is that the entropy we inject into BearSsl is hardcoded. We should
+// generate high quality entropy and use that instead but we don't. This weakens the encryption.
+
+#[derive(Debug)]
+pub enum SslError {
+    // See BR_ERR_XXXXXX in bearssl.rs for error meaning
+    // BR_ERR_OK = 0
+    BearSslWriteErr(i32),
+    BearSslReadErr(i32),
+}
 
 // LetsEncrypt trust anchor ISRG Root X1 exp. 04 Jun 2035
 static mut TA0_DN: [u8; 81] = [
@@ -89,9 +113,6 @@ pub static mut TA1_RSA_E: [u8; 3] = [0x01, 0x00, 0x01];
 
 //pub static mut IO_BUF: [u8; 4096] = [0; 4096];
 pub static mut IO_BUF: [u8; 2048] = [0; 2048];
-pub static mut READ_BUF: [u8; 512] = [0; 512];
-pub static mut WRITE_BUF: [u8; 512] = [0; 512];
-pub static mut FRAME_BUF: [u8; 128] = [0; 128];
 pub const NETWORK_HOST: &[u8; 15usize] = b"ninjametal.com\0"; // must be null terminated!!
 
 // NOTE: we want to get real entropy somehow - The entropy below is hardcoded
@@ -157,8 +178,9 @@ pub fn build_trust_anchor_ta1() -> br_x509_trust_anchor {
 // no mangle so that the linker can find this function which will be called from BearSSL
 #[no_mangle]
 extern "C" fn time(_time: &crate::bearssl::__time_t) -> crate::bearssl::__time_t {
-    rprintln!("[INF] time");
-    unsafe { UNIX_TIME }
+    let time = unsafe { UNIX_TIME };
+    rprintln!("[INF] time: {}", time);
+    time
 }
 
 // since we are not linking the clib we need to implement this function ourselves
@@ -315,8 +337,8 @@ pub extern "C" fn sock_write(
     }
 }
 
-impl<'a> Stream<NetworkError> for SslStream<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, NetworkError> {
+impl<'a> Stream<SslError> for SslStream<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, SslError> {
         rprintln!("[INF] read");
 
         let rlen = unsafe {
@@ -331,13 +353,13 @@ impl<'a> Stream<NetworkError> for SslStream<'a> {
             rprintln!("[ERR] br_sslio_read failed to read. rlen: {}", rlen);
 
             let err = self.client_context.eng.err;
-            return Err(NetworkError::BearSslReadErr(err));
+            return Err(SslError::BearSslReadErr(err));
         }
 
         Ok(rlen as usize)
     }
 
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), NetworkError> {
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), SslError> {
         rprintln!("[INF] write_all: {} bytes", buf.len());
         let io_context = &mut self.io_context as *mut _;
 
@@ -348,7 +370,7 @@ impl<'a> Stream<NetworkError> for SslStream<'a> {
             rprintln!("[ERR] br_sslio_write_all failed: {}", success);
 
             let err = self.client_context.eng.err;
-            return Err(NetworkError::BearSslWriteErr(err));
+            return Err(SslError::BearSslWriteErr(err));
         }
 
         rprintln!("[INF] br_sslio_flush");

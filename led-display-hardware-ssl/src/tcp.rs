@@ -1,4 +1,7 @@
-use crate::{time::set_time, SpiTransfer, W5500Error, W5500Physical};
+use crate::{
+    time::{set_time, TimeError},
+    SpiPhysical, W5500Error, W5500Physical,
+};
 use core::cell::RefCell;
 use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
 use embedded_websocket::framer::Stream;
@@ -6,22 +9,16 @@ use stm32f1xx_hal::delay::Delay;
 use w5500::{IpAddress, MacAddress, Socket, SocketStatus};
 
 #[derive(Debug)]
-pub enum NetworkError {
+pub enum TcpError {
     Io(W5500Error),
     Closed,
     SocketStatusNone,
-    NtpInvalidPacketLength(usize),
-    NtpInvalidVersion(u8),
-
-    // See BR_ERR_XXXXXX in bearssl.rs for error meaning
-    // BR_ERR_OK = 0
-    BearSslWriteErr(i32),
-    BearSslReadErr(i32),
+    Time(TimeError),
 }
 
-impl From<W5500Error> for NetworkError {
-    fn from(err: W5500Error) -> NetworkError {
-        NetworkError::Io(err)
+impl From<W5500Error> for TcpError {
+    fn from(err: W5500Error) -> TcpError {
+        TcpError::Io(err)
     }
 }
 
@@ -43,7 +40,7 @@ pub struct TcpStream<'a> {
     w5500: &'a mut W5500Physical,
     connection: Connection,
     delay: &'a RefCell<Delay>,
-    spi: &'a RefCell<SpiTransfer>,
+    spi: &'a RefCell<SpiPhysical>,
 }
 
 impl<'a> TcpStream<'a> {
@@ -51,7 +48,7 @@ impl<'a> TcpStream<'a> {
         w5500: &'a mut W5500Physical,
         socket: Socket,
         delay: &'a RefCell<Delay>,
-        spi: &'a RefCell<SpiTransfer>,
+        spi: &'a RefCell<SpiPhysical>,
     ) -> Self {
         let connection = Connection::new(socket);
         Self {
@@ -62,7 +59,7 @@ impl<'a> TcpStream<'a> {
         }
     }
 
-    pub fn connect(&mut self, host_ip: &IpAddress, host_port: u16) -> Result<(), NetworkError> {
+    pub fn connect(&mut self, host_ip: &IpAddress, host_port: u16) -> Result<(), TcpError> {
         rprintln!("[INF] Connecting to {}:{}", host_ip, host_port);
 
         let spi = &mut *self.spi.borrow_mut();
@@ -75,7 +72,7 @@ impl<'a> TcpStream<'a> {
         w5500.set_ip(spi, &IpAddress::new(192, 168, 1, 33))?;
         w5500.set_gateway(spi, &IpAddress::new(192, 168, 1, 1))?;
 
-        set_time(w5500, Socket::Socket0, delay, spi)?;
+        set_time(w5500, Socket::Socket0, delay, spi).map_err(TcpError::Time)?;
 
         w5500.set_protocol(spi, self.connection.socket, w5500::Protocol::TCP)?;
         w5500.dissconnect(spi, self.connection.socket)?;
@@ -90,10 +87,10 @@ impl<'a> TcpStream<'a> {
 
 fn wait_for_is_connected(
     w5500: &mut W5500Physical,
-    spi: &mut SpiTransfer,
+    spi: &mut SpiPhysical,
     connection: &mut Connection,
     delay: &mut Delay,
-) -> Result<(), NetworkError> {
+) -> Result<(), TcpError> {
     loop {
         match w5500.get_socket_status(spi, connection.socket)? {
             Some(status) => {
@@ -103,9 +100,7 @@ fn wait_for_is_connected(
                 }
 
                 match status {
-                    SocketStatus::CloseWait | SocketStatus::Closed => {
-                        return Err(NetworkError::Closed)
-                    }
+                    SocketStatus::CloseWait | SocketStatus::Closed => return Err(TcpError::Closed),
                     SocketStatus::Established => {
                         return Ok(());
                     }
@@ -114,13 +109,13 @@ fn wait_for_is_connected(
                     }
                 }
             }
-            None => return Err(NetworkError::SocketStatusNone),
+            None => return Err(TcpError::SocketStatusNone),
         }
     }
 }
 
-impl<'a> Stream<NetworkError> for TcpStream<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, NetworkError> {
+impl<'a> Stream<TcpError> for TcpStream<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, TcpError> {
         rprintln!("[INF] Read: Waiting for bytes");
         let spi = &mut *self.spi.borrow_mut();
         let delay = &mut *self.delay.borrow_mut();
@@ -142,7 +137,7 @@ impl<'a> Stream<NetworkError> for TcpStream<'a> {
         }
     }
 
-    fn write_all(&mut self, buf: &[u8]) -> Result<(), NetworkError> {
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), TcpError> {
         let mut start = 0;
         rprintln!("[INF] Write: Sending {} bytes", buf.len());
         let spi = &mut *self.spi.borrow_mut();

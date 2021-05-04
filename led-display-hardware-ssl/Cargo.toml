@@ -1,6 +1,6 @@
 [package]
 name = "led-display-hardware-ssl"
-version = "0.1.2"
+version = "0.1.3"
 authors = ["David Haig <david@ninjasource.com>"]
 edition = "2018"
 build = "build.rs" # the special build script for linking the bearssl library
@@ -9,12 +9,13 @@ build = "build.rs" # the special build script for linking the bearssl library
 cortex-m-rt = "0.6.13"
 cortex-m = "0.7.2"
 embedded-hal = "0.2.5"
+embedded-websocket = { version = "0.8.0", default-features = false }
 # embedded-websocket = { path = "../../embedded-websocket", default-features = false }
 # max7219-dot-matrix = { path = "../../max7219-dot-matrix" }
 # w5500 = { path = "../../w5500" }
-embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket", default-features = false }
-max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix" }
-w5500 = { git = "https://github.com/ninjasource/w5500" }
+# embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket", default-features = false }
+max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix", rev = "f1b25c2" }
+w5500 = { git = "https://github.com/ninjasource/w5500", rev = "cf9d20a"}
 cty = "0.2"
 stm32f1xx-hal = { version = "0.7", features = ["stm32f103", "rt"] }
 rtt-target = { version = "0.3.1", features = ["cortex-m"] } # this is for logging

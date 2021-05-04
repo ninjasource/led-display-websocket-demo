@@ -1,4 +1,4 @@
-use crate::{tcp::NetworkError, SpiTransfer, W5500Physical};
+use crate::{SpiPhysical, W5500Error, W5500Physical};
 use core::convert::TryInto;
 use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
 use stm32f1xx_hal::delay::Delay;
@@ -6,13 +6,26 @@ use w5500::{IpAddress, Socket};
 
 pub static mut UNIX_TIME: crate::bearssl::__time_t = 0;
 
+#[derive(Debug)]
+pub enum TimeError {
+    Io(W5500Error),
+    NtpInvalidPacketLength(usize),
+    NtpInvalidVersion(u8),
+}
+
+impl From<W5500Error> for TimeError {
+    fn from(err: W5500Error) -> TimeError {
+        TimeError::Io(err)
+    }
+}
+
 // NOTE: this should only be called AFTER the w5500 has been correctly set up
 pub fn set_time(
     w5500: &mut W5500Physical,
     socket: Socket,
     delay: &mut Delay,
-    spi: &mut SpiTransfer,
-) -> Result<(), NetworkError> {
+    spi: &mut SpiPhysical,
+) -> Result<(), TimeError> {
     // note that even though the MapleMini has a Real Time Clock built in we cannot rely on it
     // because we do not know if there will be constant power to keep the clock running and
     // the MapleMini Clone is missing the 32768 hz crystal that makes the Rtc tick every second
@@ -49,12 +62,12 @@ pub fn set_time(
                 }
 
                 if len != NTP_PACKET_LEN {
-                    return Err(NetworkError::NtpInvalidPacketLength(len));
+                    return Err(TimeError::NtpInvalidPacketLength(len));
                 }
 
                 let version = (response_packet[0] >> 3) & 0x07;
                 if version != 4 {
-                    return Err(NetworkError::NtpInvalidVersion(version));
+                    return Err(TimeError::NtpInvalidVersion(version));
                 }
 
                 let bytes: [u8; 8] = response_packet[32..40].try_into().unwrap();
