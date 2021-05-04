@@ -1,6 +1,5 @@
-use crate::{SpiError, SpiTransfer};
+use crate::{SpiError, SpiPhysical};
 use core::{cell::RefCell, convert::Infallible};
-use embedded_hal::blocking::spi::Transfer;
 use max7219_dot_matrix::{Command, MAX7219};
 use stm32f1xx_hal::gpio::{gpioa::PA4, Output, PushPull};
 
@@ -17,7 +16,7 @@ pub enum LedPanelError {
 
 pub struct LedPanel<'a> {
     max7219: &'a mut Max7219Physical<'a>,
-    spi: &'a RefCell<dyn Transfer<u8, Error = SpiError>>,
+    spi: &'a RefCell<SpiPhysical>,
 }
 
 impl From<Max7219Error> for LedPanelError {
@@ -27,7 +26,7 @@ impl From<Max7219Error> for LedPanelError {
 }
 
 impl<'a> LedPanel<'a> {
-    pub fn new(max7219: &'a mut Max7219Physical<'a>, spi: &'a RefCell<SpiTransfer>) -> Self {
+    pub fn new(max7219: &'a mut Max7219Physical<'a>, spi: &'a RefCell<SpiPhysical>) -> Self {
         LedPanel { max7219, spi }
     }
 
@@ -52,7 +51,7 @@ impl<'a> LedPanel<'a> {
 
 fn clear<'a>(
     max7219: &mut Max7219Physical<'a>,
-    spi: &mut dyn Transfer<u8, Error = SpiError>,
+    spi: &mut SpiPhysical,
 ) -> Result<(), LedPanelError> {
     // clear the display and set defaults
     max7219.write_command_all(spi, Command::OnOff, 0)?;

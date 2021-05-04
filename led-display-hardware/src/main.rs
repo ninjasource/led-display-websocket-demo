@@ -9,12 +9,22 @@ use core::cell::RefCell;
 use cortex_m::asm;
 use cortex_m_rt::entry;
 use display::{LedPanel, LedPanelError};
-use embedded_hal::{blocking::spi::Transfer, spi::Mode, spi::Phase, spi::Polarity};
+use embedded_hal::{spi::Mode, spi::Phase, spi::Polarity};
 use embedded_websocket as ws;
 use max7219_dot_matrix::MAX7219;
 use network::{NetworkError, TcpStream};
 use rtt_target::{rprintln, rtt_init_print};
-use stm32f1xx_hal::{delay::Delay, prelude::*, spi::Spi, stm32};
+use stm32f1xx_hal::{
+    delay::Delay,
+    gpio::{
+        gpioa::{PA5, PA6, PA7},
+        Alternate, Floating, Input, PushPull,
+    },
+    pac::SPI1,
+    prelude::*,
+    spi::{Spi, Spi1NoRemap},
+    stm32,
+};
 use w5500::{IpAddress, Socket, W5500};
 use ws::{
     framer::{Framer, FramerError},
@@ -49,8 +59,19 @@ impl From<NetworkError> for LedDemoError {
     }
 }
 
+// Spi port 1
+type SpiPhysical = Spi<
+    SPI1,
+    Spi1NoRemap,
+    (
+        PA5<Alternate<PushPull>>,
+        PA6<Input<Floating>>,
+        PA7<Alternate<PushPull>>,
+    ),
+    u8,
+>;
+
 type SpiError = stm32f1xx_hal::spi::Error;
-type SpiTransfer = dyn Transfer<u8, Error = SpiError>;
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -136,7 +157,7 @@ fn client_connect(led_panel: &mut LedPanel, stream: &mut TcpStream) -> Result<()
     let mut read_buf = [0; 512];
     let mut read_cursor = 0;
     let mut write_buf = [0; 512];
-    let mut frame_buf = [0; 1024];
+    let mut frame_buf = [0; 512];
     let mut framer = Framer::new(
         &mut read_buf,
         &mut read_cursor,

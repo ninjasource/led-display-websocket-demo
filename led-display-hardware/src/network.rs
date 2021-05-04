@@ -1,4 +1,4 @@
-use crate::{SpiError, SpiTransfer};
+use crate::{SpiError, SpiPhysical};
 use core::{cell::RefCell, convert::Infallible};
 use cortex_m::prelude::_embedded_hal_blocking_delay_DelayMs;
 use embedded_websocket::framer::Stream;
@@ -45,7 +45,7 @@ pub struct TcpStream<'a> {
     w5500: &'a mut W5500Physical,
     connection: Connection,
     delay: &'a mut Delay,
-    spi: &'a RefCell<SpiTransfer>,
+    spi: &'a RefCell<SpiPhysical>,
 }
 
 impl<'a> TcpStream<'a> {
@@ -53,7 +53,7 @@ impl<'a> TcpStream<'a> {
         w5500: &'a mut W5500Physical,
         socket: Socket,
         delay: &'a mut Delay,
-        spi: &'a RefCell<SpiTransfer>,
+        spi: &'a RefCell<SpiPhysical>,
     ) -> Self {
         let connection = Connection::new(socket);
         Self {
@@ -88,7 +88,7 @@ impl<'a> TcpStream<'a> {
 
 fn wait_for_is_connected(
     w5500: &mut W5500Physical,
-    spi: &mut SpiTransfer,
+    spi: &mut SpiPhysical,
     connection: &mut Connection,
     delay: &mut Delay,
 ) -> Result<(), NetworkError> {

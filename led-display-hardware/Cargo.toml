@@ -1,21 +1,22 @@
 [package]
 name = "led-display-hardware"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["David Haig <david@ninjasource.com>"]
 edition = "2018"
 
 [dependencies]
 cortex-m-rt = "0.6.13"
 cortex-m = "0.7.2"
-embedded-hal = "0.2.4"
+embedded-hal = "0.2.5"
+embedded-websocket = { version = "0.8.0", default-features = false }
 #embedded-websocket = { path = "../../embedded-websocket", default-features = false }
 #max7219-dot-matrix = { path = "../../max7219-dot-matrix" }
 #w5500 = { path = "../../w5500" }
-embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket", default-features = false }
-max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix" }
-w5500 = { git = "https://github.com/ninjasource/w5500" }
+# embedded-websocket = { git = "https://github.com/ninjasource/embedded-websocket", default-features = false }
+max7219-dot-matrix = { git = "https://github.com/ninjasource/max7219-dot-matrix", rev = "f1b25c2" }
+w5500 = { git = "https://github.com/ninjasource/w5500", rev = "cf9d20a"}
 stm32f1xx-hal = { version = "0.7", features = ["stm32f103", "rt"] }
-rtt-target = { version = "0.3.0", features = ["cortex-m"] } # this is for logging
+rtt-target = { version = "0.3.1", features = ["cortex-m"] } # this is for logging
 
 # this allows debugging in release mode (otherwise you only see assembly)
 [profile.release]
